@@ -6,6 +6,7 @@ tutorials/
 .ipynb_checkpoints/
 
 .nextflow.log.*
+*.DS_Store
 *.logs
 *.csv
 *.parquet
