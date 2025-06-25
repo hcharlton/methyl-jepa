@@ -2,7 +2,7 @@ import polars as pl
 import altair as alt
 
 
-data_path='../../data/processed/train_cg_32_200.parquet'
+data_path='../../data/processed/train_cg_32_10000.parquet'
 
 output_path='residual_cg_context_ipd.svg'
 

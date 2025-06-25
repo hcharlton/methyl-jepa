@@ -5,7 +5,7 @@ import re
 # --- Configuration ---
 POS_BAM_PATH = "../data/raw/methylated_hifi_reads.bam" 
 NEG_BAM_PATH = "../data/raw/unmethylated_hifi_reads.bam" 
-NUM_READS_TO_PROCESS = 200     
+NUM_READS_TO_PROCESS = 10000     
 WINDOW_SIZE = 32         
 TRAIN_PROP = 0.8     
 
@@ -61,27 +61,37 @@ def bam_to_parquet(bam_path: str, num_reads: int, window_size: int, label: int):
     return df
 
 
-def train_test_split_lazy(
+def train_test_split(
     df: pl.DataFrame, train_prop: float = 0.8
-    ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Split polars dataframe into two sets.
-    Args:
-        df (pl.DataFrame): Dataframe to split
-        train_fraction (float, optional): Fraction that goes to train. Defaults to 0.8
-    Returns:
-        Tuple[pl.DataFrame, pl.DataFrame]: Tuple of train and test dataframes
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
-    df = df.with_row_index().sample(fraction=1, seed=1337, shuffle=True)
-    df_train = df.filter(pl.col("index") < pl.col("index").max() * train_prop)
-    df_test = df.filter(pl.col("index") >= pl.col("index").max() * train_prop)
-    return df_train.drop('index'), df_test.drop('index')
+    Args:
+        df (pl.DataFrame): DataFrame to split.
+        train_prop (float, optional): The proportion of the dataset to
+                                      allocate to the training split.
+                                      Defaults to 0.8.
+    Returns:
+        tuple[pl.DataFrame, pl.DataFrame]: A tuple containing the train
+                                           and test DataFrames.
+    """
+
+    # shuffle the df
+    shuffled_df = df.sample(fraction=1, shuffle=True, seed=1337)
+    
+    # calculate the index where training data ends
+    split_idx = int(shuffled_df.height * train_prop)
+    
+    # split the shuffled datafame at the idx
+    df_train = shuffled_df.slice(offset=0, length=split_idx)
+    df_test = shuffled_df.slice(offset=split_idx)
+    
+    return df_train, df_test
 
 
-pos_df = bam_to_parquet(bam_path=POS_BAM_PATH, num_reads=NUM_READS_TO_PROCESS, window_size=WINDOW_SIZE, label=1).sample(fraction=1, seed=1337, shuffle=True)
-neg_df = bam_to_parquet(bam_path=NEG_BAM_PATH, num_reads=NUM_READS_TO_PROCESS, window_size=WINDOW_SIZE, label=0).sample(fraction=1, seed=1337, shuffle=True)
-
-pos_train_df, pos_test_df = train_test_split_lazy(pos_df, train_prop=TRAIN_PROP)
-neg_train_df, neg_test_df = train_test_split_lazy(neg_df, train_prop=TRAIN_PROP)
+pos_df = bam_to_parquet(bam_path=POS_BAM_PATH, num_reads=NUM_READS_TO_PROCESS, window_size=WINDOW_SIZE, label=1)
+neg_df = bam_to_parquet(bam_path=NEG_BAM_PATH, num_reads=NUM_READS_TO_PROCESS, window_size=WINDOW_SIZE, label=0)
+pos_train_df, pos_test_df = train_test_split(pos_df, train_prop=TRAIN_PROP)
+neg_train_df, neg_test_df = train_test_split(neg_df, train_prop=TRAIN_PROP)
 
 train_df = pl.concat([pos_train_df, neg_train_df]).sample(fraction=1, seed=1337, shuffle=True)
 test_df =  pl.concat([pos_test_df, neg_test_df]).sample(fraction=1, seed=1337, shuffle=True)
