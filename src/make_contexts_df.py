@@ -22,22 +22,20 @@ def bam_to_parquet(bam_path: str, num_reads: int, window_size: int, label: int):
         for i, read in enumerate(bam):
             if i >= num_reads:
                 break
-
             if not all(read.has_tag(tag) for tag in required_tags):
                 continue
             seq = read.query_sequence
-
             # forward values
             fi_values = read.get_tag("fi")
             fp_values = read.get_tag("fp")
             # reverse values
             ri_values = read.get_tag("ri")
             rp_values = read.get_tag("rp")
-
-
+            if any([len(fi_values)==0,len(fp_values)==0,len(ri_values)==0,len(rp_values)==0]):
+                   continue
             # Find all non-overlapping "CG" sites in the sequence
             for match in re.finditer("CG", seq):
-                L = len(seq)
+                L = len(fi_values)
                 cg_pos = match.start()
                 win_start = cg_pos - flank_size
                 win_end = cg_pos + 2 + flank_size
@@ -45,7 +43,7 @@ def bam_to_parquet(bam_path: str, num_reads: int, window_size: int, label: int):
                 rev_win_end = L - win_start
 
                 # Ensure the window is fully contained within the read
-                if win_start >= 0 and win_end <= len(seq):
+                if all([win_start >= 0, win_end <= L, rev_win_end >=0, rev_win_start <= L]):
                     records.append({
                         "read_name": read.query_name,
                         "cg_pos": cg_pos,
