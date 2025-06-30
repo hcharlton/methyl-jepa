@@ -1,11 +1,12 @@
 import pysam
 import polars as pl
 import re
+import numpy as np
 
 # --- Configuration ---
 POS_BAM_PATH = "../data/raw/methylated_hifi_reads.bam" 
 NEG_BAM_PATH = "../data/raw/unmethylated_hifi_reads.bam" 
-NUM_READS_TO_PROCESS = 10000     
+NUM_READS_TO_PROCESS = 200   
 WINDOW_SIZE = 32         
 TRAIN_PROP = 0.8     
 
@@ -41,17 +42,25 @@ def bam_to_parquet(bam_path: str, num_reads: int, window_size: int, label: int):
                 win_end = cg_pos + 2 + flank_size
                 rev_win_start = L - win_end
                 rev_win_end = L - win_start
+                window_seq = seq[win_start:win_end]
+                window_fi = list(fi_values[win_start:win_end])
+                window_fp = list(fp_values[win_start:win_end])
+                window_ri = list(ri_values[rev_win_start:rev_win_end])
+                window_rp = list(rp_values[rev_win_start:rev_win_end])
+                # make sure they all have the same length
+                if set(map(len, [window_seq, window_fi, window_fp, window_ri, window_rp])) != {WINDOW_SIZE}:
+                    continue
 
                 # Ensure the window is fully contained within the read
                 if all([win_start >= 0, win_end <= L, rev_win_end >=0, rev_win_start <= L]):
                     records.append({
                         "read_name": read.query_name,
                         "cg_pos": cg_pos,
-                        "window_seq": seq[win_start:win_end],
-                        "window_fi": list(fi_values[win_start:win_end]),
-                        "window_fp": list(fp_values[win_start:win_end]),
-                        "window_ri": list(ri_values[rev_win_start:rev_win_end]),
-                        "window_rp": list(rp_values[rev_win_start:rev_win_end])
+                        "seq": window_seq,
+                        "fi": window_fi,
+                        "fp": window_fp,
+                        "ri": window_ri,
+                        "rp": window_rp
                     })
 
     df = pl.from_dicts(records).with_columns(pl.lit(label).alias('label'))
