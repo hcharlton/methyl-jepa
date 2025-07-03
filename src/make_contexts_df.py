@@ -6,7 +6,7 @@ import numpy as np
 # --- Configuration ---
 POS_BAM_PATH = "../data/raw/methylated_hifi_reads.bam" 
 NEG_BAM_PATH = "../data/raw/unmethylated_hifi_reads.bam" 
-NUM_READS_TO_PROCESS = 200   
+NUM_READS_TO_PROCESS = 200
 WINDOW_SIZE = 32         
 TRAIN_PROP = 0.8     
 
@@ -97,6 +97,7 @@ def train_test_split(
 
 pos_df = bam_to_parquet(bam_path=POS_BAM_PATH, num_reads=NUM_READS_TO_PROCESS, window_size=WINDOW_SIZE, label=1)
 neg_df = bam_to_parquet(bam_path=NEG_BAM_PATH, num_reads=NUM_READS_TO_PROCESS, window_size=WINDOW_SIZE, label=0)
+
 pos_train_df, pos_test_df = train_test_split(pos_df, train_prop=TRAIN_PROP)
 neg_train_df, neg_test_df = train_test_split(neg_df, train_prop=TRAIN_PROP)
 
