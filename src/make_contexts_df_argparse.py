@@ -122,13 +122,19 @@ def train_test_split(
 
     # shuffle the df
     shuffled_df = df.sample(fraction=1, shuffle=True, seed=1337)
-    
+    # get the unique reads as a series
+    unique_readnames = shuffled_df['read_name'].unique()
     # calculate the index where training data ends
-    split_idx = int(shuffled_df.height * train_prop)
+    split_idx = int(len(unique_readnames) * train_prop)
+    # split the read_names into test/train partitions
+    train_readnames = unique_readnames.slice(0,split_idx)
+    test_readnames = unique_readnames.slice(split_idx, None)
+    # check that we used all of them
+    assert len(train_readnames) + len(test_readnames) == len(unique_readnames), "Partitioning did not capture all reads"
     
-    # split the shuffled datafame at the idx
-    df_train = shuffled_df.slice(offset=0, length=split_idx)
-    df_test = shuffled_df.slice(offset=split_idx)
+    # define the train/test sets by readname
+    df_train = shuffled_df.filter(pl.col('read_name').is_in(train_readnames.implode()))
+    df_test = shuffled_df.filter(pl.col('read_name').is_in(test_readnames.implode()))
     
     return df_train, df_test
 
@@ -178,10 +184,13 @@ def main():
 # keeping them seperate and shuffling
     train_df = pl.concat([pos_train_df, neg_train_df]).sample(fraction=1, seed=1337, shuffle=True)
     test_df =  pl.concat([pos_test_df, neg_test_df]).sample(fraction=1, seed=1337, shuffle=True)
+# check that the read names in the training and test sets have no overlaps
+    assert set(train_df['read_name']).isdisjoint(set(test_df['read_name'])), "Train/test set readnames are not disjoint."
 
 # write out 
     train_df.write_parquet(f'../data/processed/{args.output_name}_train.parquet')
     test_df.write_parquet(f'../data/processed/{args.output_name}_test.parquet')
+
 
 if __name__ == "__main__":
     main()
