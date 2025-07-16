@@ -10,7 +10,7 @@ import sys
 # reads into tabular data format read for use by the DataSet class which for now 
 # is still in the notebook. The source files are hardcoded for now, but the 
 # script takes a few command line parameters:
-# 1. how many reads to process
+# 1. how many reads to process (note that there are 608_644 total)
 # 2. how large of a context (in total) for each CG sample
 # 3. the name for the output files (gets some suffixes automatically)
 # 4. whether to restrict the processing s.t. each sample has one CG
@@ -177,7 +177,7 @@ def main():
                             context=args.context, 
                             label=0,
                             singletons=args.singletons)
-# split them independently in to train/test
+# split them independently into train/test
     pos_train_df, pos_test_df = train_test_split(pos_df, train_prop=TRAIN_PROP)
     neg_train_df, neg_test_df = train_test_split(neg_df, train_prop=TRAIN_PROP)
 # concatenated the training and testing datasets together
