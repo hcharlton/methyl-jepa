@@ -7,4 +7,4 @@
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate methyl-jepa
 
-python make_contexts_df_argparse.py --output-name standard_all_32 --context 32 --n_reads 0
+python make_contexts_df_argparse.py -n 0 -c 32 -o standard_all_32
