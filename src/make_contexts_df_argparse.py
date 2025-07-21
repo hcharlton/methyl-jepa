@@ -4,13 +4,14 @@ import re
 import numpy as np
 import argparse
 import sys
+import gc
 
 ### Purpose ###
 # Converts the two BAM files containing wholey methylated and unmethylated PacBio SMRT 
 # reads into tabular data format read for use by the DataSet class which for now 
 # is still in the notebook. The source files are hardcoded for now, but the 
 # script takes a few command line parameters:
-# 1. how many reads to process
+# 1. how many reads to process (note that there are 608_644 total)
 # 2. how large of a context (in total) for each CG sample
 # 3. the name for the output files (gets some suffixes automatically)
 # 4. whether to restrict the processing s.t. each sample has one CG
@@ -28,7 +29,6 @@ POS_BAM_PATH = "../data/raw/methylated_hifi_reads.bam"
 NEG_BAM_PATH = "../data/raw/unmethylated_hifi_reads.bam"       
 TRAIN_PROP = 0.8     
 
-
 # Note for the reverse strand indexing: 
 # The reverse strand is stored in the opposite direction of the 
 # forward strand. So it is from the last base to the first. 
@@ -43,11 +43,19 @@ TRAIN_PROP = 0.8
 # [L-forward_end: L-forward_start]
 # info here https://pacbiofileformats.readthedocs.io/en/13.1/BAM.html
 
-
 def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons: bool):
     # tags in the BAM file that we need to pull out each sample
     required_tags = {"fi", "ri", "fp", "rp"}
-    records = []
+    col_data = {
+        "read_name": [], 
+        "cg_pos": [],
+        "seq": [], 
+        "fi": [], 
+        "fp": [], 
+        "ri": [], 
+        "rp": []
+        }
+    
     # in other words, how far on each side of the CG should we gather context?
     # for context=32, this is 15 so that the total sample is 32 units long
     flank_size = (context - 2) // 2
@@ -82,29 +90,34 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
                 # logic for only including one CG per sample (singleton)
                 if (singletons == True) and (context_seq.count("CG") != 1):
                     continue
-                context_fi = list(fi_values[win_start:win_end])
-                context_fp = list(fp_values[win_start:win_end])
-                context_ri = list(ri_values[rev_win_start:rev_win_end])
-                context_rp = list(rp_values[rev_win_start:rev_win_end])
+                context_fi = fi_values[win_start:win_end]
+                context_fp = fp_values[win_start:win_end]
+                context_ri = ri_values[rev_win_start:rev_win_end]
+                context_rp = rp_values[rev_win_start:rev_win_end]
                 # make sure they all have the same length
                 if set(map(len, [context_seq, context_fi, context_fp, context_ri, context_rp])) != {context}:
                     continue
                 # Ensure the window is fully contained within the read
                 if all([win_start >= 0, win_end <= L, rev_win_end >=0, rev_win_start <= L]):
-                    records.append({
-                        "read_name": read.query_name,
-                        "cg_pos": cg_pos,
-                        "seq": context_seq,
-                        "fi": context_fi,
-                        "fp": context_fp,
-                        "ri": context_ri,
-                        "rp": context_rp
-                    })
-
-    df = pl.from_dicts(records).with_columns(pl.lit(label).alias('label'))
+                    col_data["read_name"].append(read.query_name)
+                    col_data["cg_pos"].append(cg_pos)
+                    col_data["seq"].append(context_seq)
+                    col_data["fi"].append(context_fi)
+                    col_data["fp"].append(context_fp)
+                    col_data["ri"].append(context_ri)
+                    col_data["rp"].append(context_rp)
+    # use List(UInt16) for memory saving since polars defaults to UInt64
+    df = pl.DataFrame({
+        "read_name": col_data["read_name"],
+        "cg_pos": col_data["cg_pos"],
+        "seq": col_data["seq"],
+        "fi": pl.Series(col_data["fi"], dtype = pl.List(pl.UInt16)),
+        "fp": pl.Series(col_data["fp"], dtype = pl.List(pl.UInt16)),
+        "ri": pl.Series(col_data["ri"], dtype = pl.List(pl.UInt16)),
+        "rp": pl.Series(col_data["rp"], dtype = pl.List(pl.UInt16)),
+    }).with_columns(pl.lit(label).alias('label'))
 
     return df
-
 
 def train_test_split(
     df: pl.DataFrame, train_prop: float = 0.8
@@ -120,10 +133,8 @@ def train_test_split(
                                            and test DataFrames.
     """
 
-    # shuffle the df
-    shuffled_df = df.sample(fraction=1, shuffle=True, seed=1337)
-    # get the unique reads as a series
-    unique_readnames = shuffled_df['read_name'].unique()
+    # get the unique reads as a series and shuffle
+    unique_readnames = df['read_name'].unique().sample(fraction=1, shuffle=True, seed=1337)
     # calculate the index where training data ends
     split_idx = int(len(unique_readnames) * train_prop)
     # split the read_names into test/train partitions
@@ -133,11 +144,10 @@ def train_test_split(
     assert len(train_readnames) + len(test_readnames) == len(unique_readnames), "Partitioning did not capture all reads"
     
     # define the train/test sets by readname
-    df_train = shuffled_df.filter(pl.col('read_name').is_in(train_readnames.implode()))
-    df_test = shuffled_df.filter(pl.col('read_name').is_in(test_readnames.implode()))
+    df_train = df.filter(pl.col('read_name').is_in(train_readnames.implode()))
+    df_test = df.filter(pl.col('read_name').is_in(test_readnames.implode()))
     
     return df_train, df_test
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -177,20 +187,26 @@ def main():
                             context=args.context, 
                             label=0,
                             singletons=args.singletons)
-# split them independently in to train/test
+# split them independently into train/test
     pos_train_df, pos_test_df = train_test_split(pos_df, train_prop=TRAIN_PROP)
     neg_train_df, neg_test_df = train_test_split(neg_df, train_prop=TRAIN_PROP)
+# remove 
+    del pos_df, neg_df
+    gc.collect()
+
 # concatenated the training and testing datasets together
 # keeping them seperate and shuffling
     train_df = pl.concat([pos_train_df, neg_train_df]).sample(fraction=1, seed=1337, shuffle=True)
     test_df =  pl.concat([pos_test_df, neg_test_df]).sample(fraction=1, seed=1337, shuffle=True)
+    del pos_train_df, neg_train_df, pos_test_df, neg_test_df
+    gc.collect()
+
 # check that the read names in the training and test sets have no overlaps
     assert set(train_df['read_name']).isdisjoint(set(test_df['read_name'])), "Train/test set readnames are not disjoint."
 
 # write out 
     train_df.write_parquet(f'../data/processed/{args.output_name}_train.parquet')
     test_df.write_parquet(f'../data/processed/{args.output_name}_test.parquet')
-
 
 if __name__ == "__main__":
     main()
