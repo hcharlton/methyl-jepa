@@ -29,7 +29,6 @@ POS_BAM_PATH = "../data/raw/methylated_hifi_reads.bam"
 NEG_BAM_PATH = "../data/raw/unmethylated_hifi_reads.bam"       
 TRAIN_PROP = 0.8     
 
-
 # Note for the reverse strand indexing: 
 # The reverse strand is stored in the opposite direction of the 
 # forward strand. So it is from the last base to the first. 
@@ -43,7 +42,6 @@ TRAIN_PROP = 0.8
 # the reverse strand. So the calculation for the reverse indexing is:
 # [L-forward_end: L-forward_start]
 # info here https://pacbiofileformats.readthedocs.io/en/13.1/BAM.html
-
 
 def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons: bool):
     # tags in the BAM file that we need to pull out each sample
@@ -121,7 +119,6 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
 
     return df
 
-
 def train_test_split(
     df: pl.DataFrame, train_prop: float = 0.8
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -136,9 +133,7 @@ def train_test_split(
                                            and test DataFrames.
     """
 
-    # shuffle the df
-    # shuffled_df = df.sample(fraction=1, shuffle=True, seed=1337)
-    # get the unique reads as a series
+    # get the unique reads as a series and shuffle
     unique_readnames = df['read_name'].unique().sample(fraction=1, shuffle=True, seed=1337)
     # calculate the index where training data ends
     split_idx = int(len(unique_readnames) * train_prop)
@@ -153,7 +148,6 @@ def train_test_split(
     df_test = df.filter(pl.col('read_name').is_in(test_readnames.implode()))
     
     return df_train, df_test
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -206,13 +200,13 @@ def main():
     test_df =  pl.concat([pos_test_df, neg_test_df]).sample(fraction=1, seed=1337, shuffle=True)
     del pos_train_df, neg_train_df, pos_test_df, neg_test_df
     gc.collect()
+
 # check that the read names in the training and test sets have no overlaps
     assert set(train_df['read_name']).isdisjoint(set(test_df['read_name'])), "Train/test set readnames are not disjoint."
 
 # write out 
     train_df.write_parquet(f'../data/processed/{args.output_name}_train.parquet')
     test_df.write_parquet(f'../data/processed/{args.output_name}_test.parquet')
-
 
 if __name__ == "__main__":
     main()
