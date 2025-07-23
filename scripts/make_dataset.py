@@ -19,9 +19,9 @@ import gc
 
 #### example usage ####
 ## short format
-# python make_contexts_df_argparse.py -n 1000 -c 32 -o output_file_name_str -r
+# python make_dataset.py -n 1000 -c 32 -o output_file_name_str -r
 ## long format
-# python make_contexts_df_argparse.py --output-name output_file_name_str --context 32 --n_reads 1000 --restrict-instances
+# python make_dataset.py --output-name output_file_name_str --context 32 --n_reads 1000 --restrict-instances
 
 
 # GLOBAL
