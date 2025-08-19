@@ -83,6 +83,7 @@ class MethylCNN(nn.Module):
         #                                ResBlock(self.in_channels*16, self.in_channels*16,kernel_size=3),
         #                                )
 
+        # note the kernel sizes are odd... a requirement for same padding
         self.extractor = nn.Sequential(ResBlock(self.in_channels, self.in_channels*2, kernel_size=7),             # (B, 8, 32) -> (B, 8, 32)
                                        ResBlock(self.in_channels*2, self.in_channels*2,kernel_size=5),            # (B, 16, 32) -> (B, 16, 32)
                                        ResBlock(self.in_channels*2, self.in_channels*2,kernel_size=5),            # (B, 16, 32) -> (B, 16, 32)

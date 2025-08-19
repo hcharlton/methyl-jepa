@@ -1,4 +1,4 @@
-# dataset_class.py
+# datasetclass.py
 
 import torch
 import polars as pl
@@ -20,6 +20,7 @@ class MethylIterableDataset(IterableDataset):
   '''
   Iterable dataset for parquet format methylation samples.
   Processes the parquet file in row_group's for memory efficiency.
+  Restrict row gruops == 0 implies use all. 
   '''
 
   def __init__(
@@ -28,10 +29,11 @@ class MethylIterableDataset(IterableDataset):
       means: Dict,
       stds: Dict,
       context: int,
-      # batch_size
+      restrict_row_groups: int = 0
       ):
     super().__init__()
     self.data_path = data_path
+    self.restrict_row_groups = restrict_row_groups
     self.means = means
     self.stds = stds
     self.context = context
@@ -42,7 +44,14 @@ class MethylIterableDataset(IterableDataset):
     try:
       pq_metadata = pq.read_metadata(self.data_path)
       self.num_row_groups = pq_metadata.num_row_groups
-      self.len = pq_metadata.num_rows
+      if not self.restrict_row_groups:
+        self.len = pq_metadata.num_rows
+      else: 
+        row_count = 0
+        for i in range(0, min(restrict_row_groups, self.num_row_groups)):
+          row_count += pq_metadata.row_group(i).num_rows
+        self.len = row_count
+
     except:
       print('Failed to read given parquet file.')
       self.num_row_groups = 0
@@ -86,12 +95,22 @@ class MethylIterableDataset(IterableDataset):
     worker_info = torch.utils.data.get_worker_info()
     if worker_info == None:
       iter_start = 0
-      iter_end = self.num_row_groups
+      if not self.restrict_row_groups:
+         iter_end = self.num_row_groups
+      else:
+         iter_end = self.restrict_row_groups
+        
     else:
-      per_worker = int(np.ceil(self.num_row_groups / float(worker_info.num_workers)))
-      worker_id = worker_info.id
-      iter_start = worker_id * per_worker
-      iter_end = min(iter_start + per_worker, self.num_row_groups)
+      if not self.restrict_row_groups:
+        per_worker = int(np.ceil(self.num_row_groups / float(worker_info.num_workers)))
+        worker_id = worker_info.id
+        iter_start = worker_id * per_worker
+        iter_end = min(iter_start + per_worker, self.num_row_groups)
+      else:
+        per_worker = int(np.ceil(self.restrict_row_groups / float(worker_info.num_workers)))
+        worker_id = worker_info.id
+        iter_start = worker_id * per_worker
+        iter_end = min(iter_start + per_worker, self.restrict_row_groups)
     row_group_indices = range(iter_start, iter_end)
     
     for i in row_group_indices:
