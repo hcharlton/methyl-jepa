@@ -29,28 +29,37 @@ class MethylIterableDataset(IterableDataset):
       means: Dict,
       stds: Dict,
       context: int,
-      restrict_row_groups: int = 0
+      restrict_row_groups: int = 0,
+      single_strand: bool = False
       ):
     super().__init__()
     self.data_path = data_path
     self.restrict_row_groups = restrict_row_groups
+    self.single_strand = single_strand
     self.means = means
     self.stds = stds
     self.context = context
     self.kinetics_features = ['fi', 'fp', 'ri', 'rp']
     self.vocab = {'A':0, 'T':1, 'C':2, 'G':3}
     self.vocab_size = len(self.vocab)
+    self.complement_map = torch.tensor([1, 0, 3, 2], dtype=torch.long)
     # self.batch_size = batch_size
     try:
       pq_metadata = pq.read_metadata(self.data_path)
       self.num_row_groups = pq_metadata.num_row_groups
       if not self.restrict_row_groups:
-        self.len = pq_metadata.num_rows
+        if self.single_strand:
+           self.len = pq_metadata.num_rows*2
+        else:
+          self.len = pq_metadata.num_rows
       else: 
         row_count = 0
         for i in range(0, min(restrict_row_groups, self.num_row_groups)):
           row_count += pq_metadata.row_group(i).num_rows
-        self.len = row_count
+        if self.single_strand:
+           self.len = row_count*2
+        else: 
+          self.len = row_count
 
     except:
       print('Failed to read given parquet file.')
@@ -59,6 +68,11 @@ class MethylIterableDataset(IterableDataset):
 
   def __len__(self):
     return self.len
+  
+  @staticmethod
+  def _reverse_complement(seq_tensor, complement_map):
+     comp_tensor = complement_map.to(seq_tensor.device)[seq_tensor]
+     return torch.flip(comp_tensor, dims=[1])
 
   def _process_row_group(self, row_group_df):
     # nucleotide sequence -> list(chars) -> numpy array
@@ -83,12 +97,24 @@ class MethylIterableDataset(IterableDataset):
     # labels
     label_tensor = torch.tensor(row_group_df['label'].to_numpy(), dtype=torch.long)
 
-    for i in range(len(row_group_df)):
-            yield {
-                'seq': seq_one_hot[i],
-                'kinetics': kinetics_tensor[i],
-                'label': label_tensor[i]
-            }
+    if self.single_strand:
+      rev_comp_tensor = self._reverse_complement(seq_tensor, self.complement_map)
+      rev_comp_seq_one_hot = F.one_hot(rev_comp_tensor, num_classes=self.vocab_size).permute(0, 2, 1)
+      
+      # Slice the already-prepared kinetics tensor
+      fwd_kinetics = kinetics_tensor[:, 0:2, :]
+      rev_kinetics = torch.flip(kinetics_tensor[:, 2:4, :], dims=[2])
+      for i in range(len(row_group_df)):
+          yield {'seq': seq_one_hot[i], 'kinetics': fwd_kinetics[i], 'label': label_tensor[i]}
+          yield {'seq': rev_comp_seq_one_hot[i], 'kinetics': rev_kinetics[i], 'label': label_tensor[i]}
+    else:
+       for i in range(len(row_group_df)):
+              yield {
+                  'seq': seq_one_hot[i],
+                  'kinetics': kinetics_tensor[i],
+                  'label': label_tensor[i]
+              }
+       
         
   def __iter__(self):
     pq_file = pq.ParquetFile(self.data_path)
