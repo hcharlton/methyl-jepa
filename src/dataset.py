@@ -94,9 +94,25 @@ class MethylIterableDataset(IterableDataset):
       axis=1
       )
     kinetics_tensor = torch.tensor(kinetics_array, dtype=torch.float32)
+    ### Theoretically this should be faster, but it doesn't work
+    # kinetics_exprs = [
+    #     pl.col(c).arr.to_list().list.eval(
+    #         (pl.element().add(1).log() - self.means[c]) / self.stds[c]
+    #     )
+    #     for c in self.kinetics_features
+    # ]
+    
+    # kinetics_tensor = torch.tensor(
+    #    row_group_df.select(kinetics_exprs).to_numpy(), 
+    #    dtype=torch.float32
+    #    ).permute(1, 0).reshape(-1, 4, self.context)
+    
     # labels
     label_tensor = torch.tensor(row_group_df['label'].to_numpy(), dtype=torch.long)
-
+    # read_name
+    read_names = row_group_df['read_name'].to_list()
+    positions = row_group_df['cg_pos'].to_list()
+    
     if self.single_strand:
       rev_comp_tensor = self._reverse_complement(seq_tensor, self.complement_map)
       rev_comp_seq_one_hot = F.one_hot(rev_comp_tensor, num_classes=self.vocab_size).permute(0, 2, 1)
@@ -105,15 +121,22 @@ class MethylIterableDataset(IterableDataset):
       fwd_kinetics = kinetics_tensor[:, 0:2, :]
       rev_kinetics = torch.flip(kinetics_tensor[:, 2:4, :], dims=[2])
       for i in range(len(row_group_df)):
-          yield {'seq': seq_one_hot[i], 'kinetics': fwd_kinetics[i], 'label': label_tensor[i]}
-          yield {'seq': rev_comp_seq_one_hot[i], 'kinetics': rev_kinetics[i], 'label': label_tensor[i]}
+          yield {'seq': seq_one_hot[i], 
+                 'kinetics': fwd_kinetics[i], 
+                 'label': label_tensor[i],
+                  'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'fwd'}}
+          yield {'seq': rev_comp_seq_one_hot[i], 
+                 'kinetics': rev_kinetics[i], 
+                 'label': label_tensor[i],
+                 'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'rev'}}
     else:
        for i in range(len(row_group_df)):
               yield {
                   'seq': seq_one_hot[i],
                   'kinetics': kinetics_tensor[i],
-                  'label': label_tensor[i]
-              }
+                  'label': label_tensor[i],
+                   'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'ds'}
+                   }
        
         
   def __iter__(self):
