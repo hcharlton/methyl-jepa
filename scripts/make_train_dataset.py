@@ -8,7 +8,7 @@ import gc
 
 ### Purpose ###
 # Converts the two BAM files containing wholey methylated and unmethylated PacBio SMRT 
-# reads into tabular data format read for use by the DataSet class which for now 
+# reads into tabular data format ready for use by the DataSet class which for now 
 # is still in the notebook. The source files are hardcoded for now, but the 
 # script takes a few command line parameters:
 # 1. how many reads to process (note that there are 608_644 total)
