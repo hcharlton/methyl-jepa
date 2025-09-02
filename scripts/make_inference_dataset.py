@@ -1,10 +1,9 @@
 import pysam
 import polars as pl
 import re
-import numpy as np
 import argparse
 import sys
-import gc
+import os
 
 ### Purpose ###
 # converts a BAM file into a parquet file of CpG instances. 
@@ -16,9 +15,6 @@ import gc
 ## long format
 # python make_inference_dataset.py --output-name output_file_name_str --context 32 --n_reads 1000 --restrict-instances
 
-
-# GLOBAL
-BAM_PATH = "~/mutationalscanning/DerivedData/bam/HiFi/chimp/martin/kinetics/martin_kinetics_diploid.bam" 
 
 # Note for the reverse strand indexing: 
 # The reverse strand is stored in the opposite direction of the 
@@ -32,16 +28,18 @@ BAM_PATH = "~/mutationalscanning/DerivedData/bam/HiFi/chimp/martin/kinetics/mart
 # we should index using [2:5] on the forward strand, and [6:8] on 
 # the reverse strand. So the calculation for the reverse indexing is:
 # [L-forward_end: L-forward_start]
+# our strategy is to align everything such that it is in accord with the forward strand. 
+# This means that we reverse index the reverse kinetic tags, but keep everything else the same
+# this also has the effect of preserving the seq->kinetics causal structure
 # info here https://pacbiofileformats.readthedocs.io/en/13.1/BAM.html
 
-def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons: bool):
+def bam_to_df(bam_path: str, n_reads: int, context: int, singletons: bool):
     # tags in the BAM file that we need to pull out each sample
-    required_tags = {"fi", "ri", "fp", "rp", "fn", "rn", "sm", "sx"}
+    required_tags = {"fi", "ri", "fp", "rp", "np", "sm", "sx"}
     col_data = {
         "read_name": [], 
         "cg_pos": [],
-        "fn": [],
-        "rn": [],
+        "np": [],
         "sm": [],
         "sx": [],
         "seq": [], 
@@ -55,17 +53,28 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
     # for context=32, this is 15 so that the total sample is 32 units long
     flank_size = (context - 2) // 2
 
+
+    counters = {
+        "reads_processed": 0,
+        "reads_missing_tags": 0,
+        "reads_with_empty_tags": 0,
+        "cpg_sites_found": 0,
+        "cpg_filtered_out_by_window": 0,
+        "cpg_appended": 0
+        }
+
+
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
-        # Iterate through a limited number of reads for a quick test
         for i, read in enumerate(bam):
             if i >= n_reads and n_reads !=0:
                 break
+            counters["reads_processed"] += 1 # counter append
             if not all(read.has_tag(tag) for tag in required_tags):
+                counters["reads_missing_tags"] += 1 # counter append
                 continue
             seq = read.query_sequence
             # meta values
-            fn_values = read.get_tag('fn')
-            rn_values = read.get_tag('rn')
+            np_value = read.get_tag('np')
             sm_values = read.get_tag('sm')
             sx_values = read.get_tag('sx')
             # forward values
@@ -79,13 +88,13 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
                     len(fp_values)==0,
                     len(ri_values)==0,
                     len(rp_values)==0,
-                    len(fn_values)==0,
-                    len(rn_values)==0,
                     len(sm_values)==0,
                     len(sx_values)==0]):
+                   counters["reads_with_empty_tags"] += 1 # counter append
                    continue
             # Find all non-overlapping "CG" sites in the sequence
             for match in re.finditer("CG", seq):
+                counters["cpg_sites_found"] += 1 # counter append
                 L = len(fi_values)
                 cg_pos = match.start()
                 win_start = cg_pos - flank_size
@@ -102,16 +111,16 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
                 context_ri = ri_values[rev_win_start:rev_win_end]
                 context_rp = rp_values[rev_win_start:rev_win_end]
                 # these do not have funny indexing since they are not strand specific
-                context_fn = fn_values[win_start:win_end]
-                context_rn = rn_values[win_start:win_end]
                 context_sm = sm_values[win_start:win_end]
                 context_sx = sx_values[win_start:win_end]
 
                 # make sure they all have the same length
-                if set(map(len, [context_seq, context_fi, context_fp, context_ri, context_rp, context_fn, context_rn, context_sm, context_sx])) != {context}:
+                if set(map(len, [context_seq, context_fi, context_fp, context_ri, context_rp, context_sm, context_sx])) != {context}:
+                    counters["cpg_filtered_out_by_window"] += 1 # counter append
                     continue
                 # Ensure the window is fully contained within the read
                 if all([win_start >= 0, win_end <= L, rev_win_end >=0, rev_win_start <= L]):
+                    counters["cpg_appended"] += 1 # counter append
                     col_data["read_name"].append(read.query_name)
                     col_data["cg_pos"].append(cg_pos)
                     col_data["seq"].append(context_seq)
@@ -119,17 +128,20 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
                     col_data["fp"].append(context_fp)
                     col_data["ri"].append(context_ri)
                     col_data["rp"].append(context_rp)
-                    col_data["fn"].append(context_fn)
-                    col_data["rn"].append(context_rn)
+                    col_data["np"].append(np_value)
                     col_data["sm"].append(context_sm)
                     col_data["sx"].append(context_sx)
     # use List(UInt16) for memory saving since polars defaults to UInt64
+
+    print("--- Debugging Counters ---")
+    for key, value in counters.items():
+        print(f"{key:<25}: {value}")
+    print("--------------------------")
     df = pl.DataFrame({
         "read_name": col_data["read_name"],
         "cg_pos": col_data["cg_pos"],
         "seq": col_data["seq"],
-        "fn": pl.Series(col_data["fn"], dtype = pl.List(pl.UInt8)),
-        "rn": pl.Series(col_data["rn"], dtype = pl.List(pl.UInt8)),
+        "np": pl.Series(col_data["np"], dtype = pl.UInt8),
         "sm": pl.Series(col_data["sm"], dtype = pl.List(pl.UInt8)),
         "sx": pl.Series(col_data["sx"], dtype = pl.List(pl.UInt8)),
         "fi": pl.Series(col_data["fi"], dtype = pl.List(pl.UInt16)),
@@ -144,8 +156,13 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
 def main():
     parser = argparse.ArgumentParser(
         description="Processes the first N reads or 0 for all of the methylation dataset." \
-        "Takes context size as a parameter. Outputs a train and test dataset."
+        "Takes context size as a parameter. Outputs a parquet file containing 1 sample per row."
     )
+    parser.add_argument('-i', '--input_path',
+                    type=str,
+                    required=True,
+                    help="Path to the input BAM file.")
+    
     parser.add_argument('-n', '--n_reads',
                         type=int,
                         required=True,
@@ -157,7 +174,7 @@ def main():
     parser.add_argument('-o', '--output_name',
                         type=str,
                         required=True,
-                        help="The prefix for the two output parquet files. Train and test will be appended")
+                        help="The output file name")
     parser.add_argument('--singletons',
                         action='store_true',
                         help="If specified, restrict samples to contain only one CG instance. Defaults to False if not specified.")
@@ -166,10 +183,9 @@ def main():
         print("Error: n_reads should be positive or 0 (to indicate all reads).")
         sys.exit(1)
 
-    df = bam_to_df(bam_path=BAM_PATH, 
+    df = bam_to_df(bam_path=os.path.expanduser(args.input_path), 
                             n_reads=args.n_reads, 
                             context=args.context, 
-                            label=1,
                             singletons=args.singletons)
 
 
