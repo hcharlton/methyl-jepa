@@ -45,17 +45,28 @@ TRAIN_PROP = 0.8
 
 def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons: bool):
     # tags in the BAM file that we need to pull out each sample
-    required_tags = {"fi", "ri", "fp", "rp"}
+    required_tags = {"fi", "ri", "fp", "rp", "np"}
     col_data = {
         "read_name": [], 
         "cg_pos": [],
         "seq": [], 
+        "qual": [],
+        "np": [],
         "fi": [], 
         "fp": [], 
         "ri": [], 
         "rp": []
         }
     
+    counters = {
+        "reads_processed": 0,
+        "reads_missing_tags": 0,
+        "reads_with_empty_tags": 0,
+        "windows_processed": 0,
+        "windows_filtered_by_length": 0,
+        "windows_appended": 0
+        }
+
     # in other words, how far on each side of the CG should we gather context?
     # for context=32, this is 15 so that the total sample is 32 units long
     flank_size = (context - 2) // 2
@@ -65,20 +76,31 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
         for i, read in enumerate(bam):
             if i >= n_reads and n_reads !=0:
                 break
+            counters["reads_processed"] += 1 # counter append
             if not all(read.has_tag(tag) for tag in required_tags):
+                counters["reads_missing_tags"] += 1 # counter append
                 continue
+            # invariant values
             seq = read.query_sequence
-            # forward values
+            qual_values = list(read.query_qualities)
+            np_value = read.get_tag("np")
+            # fwd kinetics
             fi_values = read.get_tag("fi")
             fp_values = read.get_tag("fp")
-            # reverse values
+            # rev kinetics
             ri_values = read.get_tag("ri")
             rp_values = read.get_tag("rp")
-            # check that none of the 
-            if any([len(fi_values)==0,len(fp_values)==0,len(ri_values)==0,len(rp_values)==0]):
-                   continue
+            # length checks
+            if any([len(fi_values)==0,
+                    len(fp_values)==0,
+                    len(ri_values)==0,
+                    len(rp_values)==0,
+                    len(qual_values)==0]):
+                counters["reads_with_empty_tags"] += 1
+                continue
             # Find all non-overlapping "CG" sites in the sequence
             for match in re.finditer("CG", seq):
+                counters["windows_processed"] += 1 # counter append
                 L = len(fi_values)
                 cg_pos = match.start()
                 win_start = cg_pos - flank_size
@@ -87,30 +109,43 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, label: int, singletons:
                 rev_win_start = L - win_end
                 rev_win_end = L - win_start
                 context_seq = seq[win_start:win_end]
+                context_qual = qual_values[win_start:win_end]
                 # logic for only including one CG per sample (singleton)
                 if (singletons == True) and (context_seq.count("CG") != 1):
                     continue
+                # slice per-base tags
                 context_fi = fi_values[win_start:win_end]
                 context_fp = fp_values[win_start:win_end]
                 context_ri = ri_values[rev_win_start:rev_win_end]
                 context_rp = rp_values[rev_win_start:rev_win_end]
                 # make sure they all have the same length
                 if set(map(len, [context_seq, context_fi, context_fp, context_ri, context_rp])) != {context}:
+                    counters["windows_filtered_by_length"] += 1 # counter append
                     continue
                 # Ensure the window is fully contained within the read
                 if all([win_start >= 0, win_end <= L, rev_win_end >=0, rev_win_start <= L]):
+                    counters["windows_appended"] += 1
                     col_data["read_name"].append(read.query_name)
                     col_data["cg_pos"].append(cg_pos)
                     col_data["seq"].append(context_seq)
+                    col_data['qual'].append(context_qual)
                     col_data["fi"].append(context_fi)
                     col_data["fp"].append(context_fp)
                     col_data["ri"].append(context_ri)
                     col_data["rp"].append(context_rp)
-    # use List(UInt16) for memory saving since polars defaults to UInt64
+                    col_data["np"].append(np_value)
+
+    print(f"--- Debugging Counters for [{bam_path}] ---")
+    for key, value in counters.items():
+        print(f"{key:<30}: {value}")
+    print("--------------------------")
+
     df = pl.DataFrame({
-        "read_name": col_data["read_name"],
+        "read_name": pl.Series(col_data["read_name"], dtype = pl.String),
         "cg_pos": col_data["cg_pos"],
-        "seq": col_data["seq"],
+        "seq": pl.Series(col_data["seq"], dtype = pl.String),
+        "qual": pl.Series(col_data['qual'], dtype = pl.List(pl.UInt8)),
+        "np": pl.Series(col_data["np"], dtype = pl.UInt8),
         "fi": pl.Series(col_data["fi"], dtype = pl.List(pl.UInt16)),
         "fp": pl.Series(col_data["fp"], dtype = pl.List(pl.UInt16)),
         "ri": pl.Series(col_data["ri"], dtype = pl.List(pl.UInt16)),
