@@ -8,8 +8,9 @@ alt.data_transformers.enable("vegafusion")
 KINETICS_FEATURES = ['fi', 'ri', 'fp', 'rp']
 
 q = (
-  pl.scan_parquet(os.path.expanduser('~/mutationalscanning/Workspaces/chcharlton/methyl-jepa/data/processed/null/martin_null_p0.024_n1m.parquet'))
+  pl.scan_parquet(os.path.expanduser('~/mutationalscanning/Workspaces/chcharlton/methyl-jepa/data/processed/null/martin_null_p0.24_n1m.parquet'))
   .select(KINETICS_FEATURES)
+  .head(10_000_000)
   )
 df = q.collect()
 
@@ -29,7 +30,8 @@ def plot_feature_dists(df, features, log_scale=True):
       width=400,
       height=400,
   ).facet(
-      column='kinetics_feature:N'
+      column='kinetics_feature:N',
+      columns=2
   ).properties(
       title="Martin-p0.024-n1m Kinetics Features Distributions"
   )

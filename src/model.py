@@ -5,7 +5,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from typing import Dict, List, Any, Optional
+from typing import Dict
 from enum import Enum
 
 class FeatureSet(Enum):
@@ -54,9 +54,9 @@ class ResBlock(nn.Module):
     return out
 
 
-class MethylCNN(nn.Module):
+class MethylCNNv1(nn.Module):
     def __init__(self, features: FeatureSet, sequence_length = 32, num_classes = 2, dropout_p = 0.1):
-        super(MethylCNN, self).__init__()
+        super(MethylCNNv1, self).__init__()
 
         self.features = features
         self.sequence_length = sequence_length
@@ -71,19 +71,6 @@ class MethylCNN(nn.Module):
         else:
           raise ValueError('Invalid feature set. See FeatureSet class.')
 
-        # self.extractor = nn.Sequential(ResBlock(self.in_channels, self.in_channels*2, kernel_size=3),
-        #                                ResBlock(self.in_channels*2, self.in_channels*2,kernel_size=5),
-        #                                ResBlock(self.in_channels*2, self.in_channels*4,kernel_size=5),
-        #                                nn.MaxPool1d(kernel_size=2, stride=2),
-        #                                ResBlock(self.in_channels*4, self.in_channels*8,kernel_size=5),
-        #                                ResBlock(self.in_channels*8, self.in_channels*8,kernel_size=5),
-        #                                nn.MaxPool1d(kernel_size=2, stride=2),
-        #                                ResBlock(self.in_channels*8, self.in_channels*16,kernel_size=7),
-        #                                nn.MaxPool1d(kernel_size=2, stride=2),
-        #                                ResBlock(self.in_channels*16, self.in_channels*16,kernel_size=3),
-        #                                )
-
-        # note the kernel sizes are odd... a requirement for same padding
         self.extractor = nn.Sequential(ResBlock(self.in_channels, self.in_channels*2, kernel_size=7),             # (B, 8, 32) -> (B, 8, 32)
                                        ResBlock(self.in_channels*2, self.in_channels*2,kernel_size=5),            # (B, 16, 32) -> (B, 16, 32)
                                        ResBlock(self.in_channels*2, self.in_channels*2,kernel_size=5),            # (B, 16, 32) -> (B, 16, 32)
@@ -145,4 +132,9 @@ class MethylCNN(nn.Module):
         logits = self.fc2(x)
 
         return logits
+    
+MODEL_REGISTRY = {
+    'MethylCNNv1': MethylCNNv1,
+    # 'MethylCNNv2': MethylCNNv2, # (when new models are added, note here)
+}
 

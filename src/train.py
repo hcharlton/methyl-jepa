@@ -1,13 +1,21 @@
+# takes a 
+
+
+
+
 import torch
+import polars as pl
+import argparse
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 from typing import Dict, List, Any, Optional
 from .evaluate import evaluate 
+from .model import MethylCNNv1, MODEL_REGISTRY 
 
 
-def train(
+def train_model(
     model: nn.Module,
     train_loader: DataLoader,
     test_loader: DataLoader,
@@ -16,7 +24,6 @@ def train(
     optimizer,
     device: torch.device,
     ) -> Dict[str, float]:
-    scaler = GradScaler()
 
     epoch_train_losses = []
     epoch_test_losses = []
@@ -28,16 +35,18 @@ def train(
             # remove the label from batch
             labels = batch.pop('label').to(device)
             # dictionary of features, with features on device
-            inputs = {k: v.to(device) for k, v in batch.items()}
+            # this doesn't work with the additional metadata info
+            # inputs = {k: v.to(device) for k, v in batch.items()}
+            inputs = {
+                'seq': batch['seq'].to(device),
+                'kinetics': batch['kinetics'].to(device)
+            }
             # zero grads
             optimizer.zero_grad()
-            # forward + backward + optimize
-            with autocast(device_type=device.type):
-              outputs = model(inputs)
-              loss = criterion(outputs, labels)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels.float())
+            loss.backward()
+            optimizer.step()
             # store training loss
             running_loss += loss.item()
         # calculate avg training epoch loss
@@ -45,7 +54,7 @@ def train(
         # add to running list
         epoch_train_losses.append(avg_epoch_loss)
         # get test set evaluation stats
-        eval_dict = evaluate(model, test_loader, criterion, device)
+        eval_dict = evaluate_model(model, test_loader, criterion, device)
         test_loss = eval_dict['loss']
         test_acc = eval_dict['accuracy']
         epoch_test_losses.append(test_loss)
@@ -56,3 +65,13 @@ def train(
 
     print(f'Completed training for {epochs} epochs')
     return {'train_losses': epoch_train_losses, 'test_losses': epoch_test_losses, 'test_acc': epoch_test_acc}
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Trains a methylation classifier given arguments for the " \
+        ""
+    ModelClass = MODEL_REGISTRY[args.model_architecture]
+    model = ModelClass(**model_config)
+        
+    )

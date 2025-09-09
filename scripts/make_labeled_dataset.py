@@ -5,6 +5,7 @@ import numpy as np
 import argparse
 import sys
 import gc
+import os
 
 ### Purpose ###
 # Converts the two BAM files containing wholey methylated and unmethylated PacBio SMRT 
@@ -18,16 +19,8 @@ import gc
 
 
 #### example usage ####
-## short format
-# python make_dataset.py -n 1000 -c 32 -o output_file_name_str -r
-## long format
-# python make_dataset.py --output-name output_file_name_str --context 32 --n_reads 1000 --restrict-instances
-
-
-# GLOBAL
-POS_BAM_PATH = "../data/raw/methylated_hifi_reads.bam" 
-NEG_BAM_PATH = "../data/raw/unmethylated_hifi_reads.bam"       
-TRAIN_PROP = 0.8     
+# python -m scripts.make_dataset --pos_bam "path/to/pos_bam" --neg-bam "path/to/neg_bam" --train-output "path/to/trainfile.parquet"\\ 
+# --test-output "path/to/testfile.parquet" --test_prop 0.8 --context 32 --n_reads 1000 --singletons
 
 # Note for the reverse strand indexing: 
 # The reverse strand is stored in the opposite direction of the 
@@ -189,18 +182,34 @@ def main():
         description="Processes the first N reads or 0 for all of the methylation dataset." \
         "Takes context size as a parameter. Outputs a train and test dataset."
     )
-    parser.add_argument('-n', '--n_reads',
+    parser.add_argument('--pos-bam', 
+                        type=str, 
+                        required=True, 
+                        help="Path to the methylated (positive label) BAM file.")
+    parser.add_argument('--neg-bam', 
+                        type=str, 
+                        required=True, 
+                        help="Path to the unmethylated (negative label) BAM file.")
+    parser.add_argument('-n', '--n-reads',
                         type=int,
                         required=True,
-                        help="Number of reads to process. 0 for all reads.")
+                        help="Numbxer of reads to process. 0 for all reads.")
     parser.add_argument('-c', '--context',
                         type=int,
                         required=True,
                         help='How many base pairs to extract for each sample, including the CG pair.')
-    parser.add_argument('-o', '--output_name',
+    parser.add_argument('--train-prop',
+                        type=float, 
+                        default=0.8, 
+                        help="Proportion of data to allocate to the training set. Defaults to 0.8.")
+    parser.add_argument('--train-output', 
+                        type=str, 
+                        required=True, 
+                        help="Full path for the output training parquet file.")
+    parser.add_argument('--test-output', 
                         type=str,
-                        required=True,
-                        help="The prefix for the two output parquet files. Train and test will be appended")
+                        required=True, 
+                        help="Full path for the output testing parquet file.")
     parser.add_argument('--singletons',
                         action='store_true',
                         help="If specified, restrict samples to contain only one CG instance. Defaults to False if not specified.")
@@ -210,21 +219,21 @@ def main():
         sys.exit(1)
 
 # make the dataframe for the methylated data
-    pos_df = bam_to_df(bam_path=POS_BAM_PATH, 
+    pos_df = bam_to_df(bam_path=args.pos_bam, 
                             n_reads=args.n_reads, 
                             context=args.context, 
                             label=1,
                             singletons=args.singletons)
 
 # and for the unmethylated data
-    neg_df = bam_to_df(bam_path=NEG_BAM_PATH, 
+    neg_df = bam_to_df(bam_path=args.neg_bam, 
                             n_reads=args.n_reads, 
                             context=args.context, 
                             label=0,
                             singletons=args.singletons)
 # split them independently into train/test
-    pos_train_df, pos_test_df = train_test_split(pos_df, train_prop=TRAIN_PROP)
-    neg_train_df, neg_test_df = train_test_split(neg_df, train_prop=TRAIN_PROP)
+    pos_train_df, pos_test_df = train_test_split(pos_df, train_prop=args.train_prop)
+    neg_train_df, neg_test_df = train_test_split(neg_df, train_prop=args.train_prop)
 # remove 
     del pos_df, neg_df
     gc.collect()
@@ -239,9 +248,13 @@ def main():
 # check that the read names in the training and test sets have no overlaps
     assert set(train_df['read_name']).isdisjoint(set(test_df['read_name'])), "Train/test set readnames are not disjoint."
 
+# check directory existence
+    os.makedirs(os.path.dirname(args.train_output), exist_ok=True)
+    os.makedirs(os.path.dirname(args.test_output), exist_ok=True)
+
 # write out 
-    train_df.write_parquet(f'../data/processed/{args.output_name}_train.parquet')
-    test_df.write_parquet(f'../data/processed/{args.output_name}_test.parquet')
+    train_df.write_parquet(args.train_output)
+    test_df.write_parquet(args.test_output)
 
 if __name__ == "__main__":
     main()
