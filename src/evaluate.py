@@ -6,11 +6,12 @@ from typing import Dict, List, Any, Optional
 
 
 
-def evaluate(
+def evaluate_model(
     model: nn.Module,
     data_loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
+    threshold: float = 0.5
     ) -> Dict[str, float]:
     model.eval()
     running_loss: float = 0.0
@@ -23,16 +24,18 @@ def evaluate(
     with torch.no_grad():
         for batch in tqdm(data_loader):
             labels: torch.Tensor = batch.pop("label").to(device)
-            inputs: Dict[str, torch.Tensor] = {
-                k: v.to(device) for k, v in batch.items()
+            inputs = {
+                'seq': batch['seq'].to(device),
+                'kinetics': batch['kinetics'].to(device)
             }
 
-            logits: torch.Tensor = model(inputs)
-            loss: torch.Tensor = criterion(logits, labels)
-
+            logits = model(inputs)
+            loss = criterion(logits, labels.float())
             running_loss += loss.item() * labels.size(0)
 
-            _, preds = torch.max(logits.data, 1)
+            probs = torch.sigmoid(logits)
+            preds = probs>threshold
+            
             total_samples += labels.size(0)
 
             correct_predictions += (preds == labels).sum().item()

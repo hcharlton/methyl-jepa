@@ -12,7 +12,7 @@ CONFIG = {
     'neg_bam_path': "data/raw/unmethylated_hifi_reads.bam", 
     'train_ds_path': 'data/processed/pacbio_standard_train.parquet',
     'test_ds_path': 'data/processed/pacbio_standard_test.parquet',
-    'norm_stats_path': 'data/processed/norm_stats_gwf.json',
+    'norm_stats_path': 'data/processed/norm_stats.yaml',
     'train_prop': 0.8,
     'n_reads': 10,
     'context_size': 32,
@@ -39,9 +39,9 @@ gwf = Workflow(defaults={'account': CONFIG['gdk_account']})
 
 def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, context, train_prop):
     """Creates train and test datasets"""
-    inputs = {'pos_bam': pos_bam, 'neg_bam': neg_bam},
-    outputs = {'train_ds': train_out, 'test_ds': test_out},
-    options = {'cores': 16, 'memory': '64gb', 'walltime': '01:00:00'},
+    inputs = {'pos_bam': pos_bam, 'neg_bam': neg_bam}
+    outputs = {'train_ds': train_out, 'test_ds': test_out}
+    options = {'cores': 16, 'memory': '64gb', 'walltime': '01:00:00'}
     spec=f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
@@ -64,7 +64,7 @@ def compute_norm_stats(train_parquet_path, output_json_path):
     outputs={'stats_file': output_json_path}
     options = {'cores': 8, 
                'memory': '16gb', 
-               'walltime': '00:10:00'}
+               'walltime': '00:00:50'}
     spec=f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
@@ -73,7 +73,15 @@ def compute_norm_stats(train_parquet_path, output_json_path):
         -i {train_parquet_path} \\
         -o {output_json_path}
     """
-    return AnonymousTarget(inputs=inputs, outputs=outputs, options = options, spec=spec)
+    return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
+
+# def train
+# inputs: [config.yaml, train.parquet, test.parquet]
+# outputs: [artifact.pt]
+
+# def train(mode_path)
+
+# def infer
 
 ### WORKFLOW GRAPH
 

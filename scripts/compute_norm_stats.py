@@ -1,7 +1,7 @@
 import polars as pl
 import os
 from src.config import KINETICS_FEATURES
-import json
+import yaml
 import argparse
 
 def compute_log_normalization_stats(df, features, epsilon=1):
@@ -54,10 +54,10 @@ def main():
     os.makedirs(os.path.dirname(exp_outpath), exist_ok=True)
 
     with open(exp_outpath, 'w') as f:
-        json.dump(stats_dict, f, indent=4)
+        yaml.dump(stats_dict, f, indent=4)
 
     print(f"Normalization stats saved to {exp_outpath}")
-    print(json.dumps(stats_dict, indent=4))
+    print(yaml.dump(stats_dict, indent=4))
 
 
 if __name__ == "__main__":

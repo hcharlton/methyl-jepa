@@ -1,1 +1,1 @@
-KINETICS_FEATURES = ['fi', 'ri', 'fp', 'rp']
+KINETICS_FEATURES = ['fi','ri','rp','fp']

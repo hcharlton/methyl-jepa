@@ -1,0 +1,26 @@
+model:
+  architecture: 'MethylCNNv2'
+  params:
+    sequence_length: 32
+    num_classes: 2
+    dropout_p: 0.1
+    feature_set: 'hemi'
+
+data:
+  stats_path: 'path/within/project/to/dataset_stats.json'
+  train_path: 'path to training set'
+  test_path: 'path to test set'
+  restrict_row_groups: 2
+
+training:
+  epochs: 5
+  batch_size: 8192
+  criterion: 
+    name: 'BCEWithLogitsLoss'
+    params: {}
+  optimizer: 
+    name: 'AdamW'
+    weight_decay: 1.0e-2
+    betas: [0.9, 0.999]
+    eps: 1.0e-08
+    lr: 0.001

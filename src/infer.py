@@ -30,7 +30,7 @@ from tqdm import tqdm
 from enum import Enum
 
 from src.dataset import MethylIterableDataset
-from src.model import MethylCNN, FeatureSet
+from src.model import MethylCNNv1, FeatureSet, MODEL_REGISTRY
 
 # --- Configuration ---
 # for large datasets (vastly improves max size)
@@ -40,14 +40,11 @@ pl.Config(fmt_str_lengths=50)
 # for the workers in the iterable dataset
 torch.multiprocessing.set_start_method('spawn', force=True)
 
-# --- Models ---
-MODEL_REGISTRY = {
-    'MethylCNN': MethylCNN
-    }
 
-def load_model(model_weights_path, device):
+
+def load_model(model_path, device):
     """Loads a model with its corresponding architecture and configuration."""
-    checkpoint = torch.load(model_weights_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device)
     
     # 1. Get architecture name and arguments from the file
     model_arch_name = checkpoint['architecture']
@@ -74,7 +71,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Run inference on a methylation dataset.")
     
     # Required arguments
-    parser.add_argument('--model-weights-path', type=str, required=True, help='Path to the trained model weights (.pt file).')
+    parser.add_argument('--model-path', type=str, required=True, help='Path to the trained model weights (.pt file).')
     parser.add_argument('--data-path', type=str, required=True, help='Path to the input Parquet dataset.')
     parser.add_argument('--stats-path', type=str, required=True, help='Path to the JSON file with normalization stats.')
     parser.add_argument('--output-path', type=str, required=True, help='Path to save the output Parquet file.')
@@ -103,6 +100,55 @@ def run_inference(model, data_loader, device):
     Runs inference on the provided dataloader and returns predictions appended to the samples
     """
 
+def model_inference(
+    model: nn.Module,
+    data_loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> torch.Tensor:
+    model.eval()
+    losses_all: List[torch.Tensor] = []
+    probs_all: List[torch.Tensor] = []
+    labels_all: List[torch.Tensor] = []
+    strand_all = []
+    pos_all = []
+    read_name_all = []
+
+    with torch.no_grad():
+        for batch in tqdm(data_loader):
+            labels: torch.Tensor = batch.pop("label").to(device)
+            inputs = {
+                'seq': batch['seq'].to(device),
+                'kinetics': batch['kinetics'].to(device)
+            }
+
+            logits: torch.Tensor = model(inputs)
+            loss: torch.Tensor = criterion(logits, labels.float())
+            probs = torch.sigmoid(logits)
+
+            losses_all.append(loss.cpu())
+            probs_all.append(probs.cpu())
+            labels_all.append(labels.cpu())
+
+            strand_all.extend(batch['metadata']['strand'])
+            pos_all.extend(batch['metadata']['position'].tolist())
+            read_name_all.extend(batch['metadata']['read_name'])
+
+    return pl.DataFrame({
+        'label': torch.cat(labels_all).numpy(),
+        'loss': torch.cat(losses_all).numpy(),
+        'prob': torch.cat(probs_all).numpy(),
+        'read_name': read_name_all,
+        'strand':strand_all,
+        'pos': pos_all
+    })
+
+analysis_criterion = nn.BCEWithLogitsLoss(reduction='none')
+
+analysis_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=False, num_workers=8)
+
+output_df = model_inference(model, analysis_dl, analysis_criterion, device)
+
 def main():
     args = get_args()
     # --- Set up device ---
@@ -119,7 +165,7 @@ def main():
     train_stds = stats['stds']
 
     # --- Setup Model ---
-    model = load_model(args.model_weights_path, device)
+    model = load_model(args.model_path, device)
     model.to(device)
     model.eval()
 

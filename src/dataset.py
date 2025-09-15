@@ -10,7 +10,6 @@ from typing import Dict
 import torch.nn.functional as F
 
 
-
 def compute_log_normalization_stats(df, features, epsilon=1):
     means = {col: (df[col].explode() + epsilon).log().mean() for col in features}
     stds = {col: (df[col].explode() + epsilon).log().explode().std() for col in features}

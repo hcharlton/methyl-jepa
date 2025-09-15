@@ -93,8 +93,7 @@ class MethylCNNv1(nn.Module):
 
         # Linear layers
         self.fc1 = nn.Linear(in_features=self.fc_input_features, out_features=128)
-        self.fc2 = nn.Linear(in_features=128, out_features=num_classes)
-
+        self.fc2 = nn.Linear(in_features=128, out_features=1)
 
         # dropout
         self.dropout = nn.Dropout(p=dropout_p)
@@ -133,8 +132,97 @@ class MethylCNNv1(nn.Module):
 
         return logits
     
+class MethylCNNv2(nn.Module):
+    def __init__(self, features: FeatureSet, sequence_length = 32, num_classes = 2, dropout_p = 0.1):
+        super().__init__()
+
+        self.features = features
+        self.sequence_length = sequence_length
+        self.num_classes = num_classes
+
+        if self.features == FeatureSet.NUCLEOTIDES:
+          self.in_channels = 4
+        elif self.features == FeatureSet.KINETICS:
+          self.in_channels = 4
+        elif self.features == FeatureSet.ALL:
+          self.in_channels = 8
+        elif self.features == FeatureSet.HEMI:
+          self.in_channels = 6
+        else:
+          raise ValueError('Invalid feature set. See FeatureSet class.')
+
+        self.extractor = nn.Sequential(
+            ConvBlock(self.in_channels, self.in_channels*2, kernel_size=7),            # (B, 8, 32)  -> (B, 16, 32) [in the case of ALL]
+
+            ResBlock(self.in_channels*2, self.in_channels*4, kernel_size=3),           # (B, 16, 32)  -> (B, 32, 32)
+            ResBlock(self.in_channels*4, self.in_channels*4,kernel_size=3),            # (B, 32, 32) -> (B, 16, 32)
+            ResBlock(self.in_channels*4, self.in_channels*4,kernel_size=3),            # (B, 32, 32) -> (B, 32, 32)
+
+            ResBlock(self.in_channels*4, self.in_channels*8,kernel_size=3, stride=2),  # (B, 32, 32) -> (B, 64, 16)
+            ResBlock(self.in_channels*8, self.in_channels*8,kernel_size=3),            # (B, 64, 16) -> (B, 64, 16)
+            ResBlock(self.in_channels*8, self.in_channels*8,kernel_size=3),            # (B, 64, 16) -> (B, 64, 16)
+
+            ResBlock(self.in_channels*8, self.in_channels*16,kernel_size=3, stride=2), # (B, 64, 16) -> (B, 128, 8)
+            ResBlock(self.in_channels*16, self.in_channels*16,kernel_size=3),          # (B, 128, 8) -> (B, 128, 8)
+            ResBlock(self.in_channels*16, self.in_channels*16,kernel_size=3),          # (B, 128, 8) -> (B, 128, 8)
+            ResBlock(self.in_channels*16, self.in_channels*16,kernel_size=3),          # (B, 128, 8) -> (B, 128, 8)
+            ResBlock(self.in_channels*16, self.in_channels*16,kernel_size=3),          # (B, 128, 8) -> (B, 128, 8)
+            ResBlock(self.in_channels*16, self.in_channels*16,kernel_size=3),          # (B, 128, 8) -> (B, 128, 8)
+
+            ResBlock(self.in_channels*16, self.in_channels*32,kernel_size=3, stride=2),# (B, 128, 8) -> (B, 256, 4)
+            ResBlock(self.in_channels*32, self.in_channels*32,kernel_size=3),          # (B, 256, 4) -> (B, 256, 4)
+            ResBlock(self.in_channels*32, self.in_channels*32,kernel_size=3),          # (B, 256, 4) -> (B, 256, 4)
+            )
+
+        # calculate fc layer input with dummy passthrough
+        self.fc_input_features = self._get_conv_output_size(sequence_length)
+
+        # Linear layers
+        self.fc1 = nn.Linear(in_features=self.fc_input_features, out_features=128)
+        self.fc2 = nn.Linear(in_features=128, out_features=1)
+
+
+        # dropout
+        self.dropout = nn.Dropout(p=dropout_p)
+
+    def _extract_features(self, x: torch.Tensor) -> torch.Tensor:
+      return self.extractor(x)
+
+    def _get_conv_output_size(self, sequence_length: int) -> int:
+        """
+        Calculates the flattened output size of the convolutional layers
+        by performing a forward pass on random data of the right shape.
+        """
+        dummy_input = torch.randn(1, self.in_channels, sequence_length)
+        # calculate number of elements (numel) of final feature map
+        output = self._extract_features(dummy_input)
+        return output.numel()
+
+    def forward(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        seq = batch['seq']
+        kinetics = batch['kinetics']
+
+        # the input is a dictionary, so convert to a tensor
+        if self.features == FeatureSet.NUCLEOTIDES:
+          x = seq.to(self.fc1.weight.dtype) # -> [B, 4, L=32]
+        elif self.features == FeatureSet.KINETICS:
+          x = kinetics.to(self.fc1.weight.dtype) # -> [B, 4, L=32]
+        elif self.features == FeatureSet.ALL:
+          x = torch.cat([seq, kinetics], dim=1).to(self.fc1.weight.dtype) # -> [B, 8, L=32]
+        elif self.features == FeatureSet.HEMI:
+          x = torch.cat([seq, kinetics], dim=1).to(self.fc1.weight.dtype) # -> [6, 8, L=32]
+
+        x = self._extract_features(x)
+        x = torch.flatten(x, 1)
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.dropout(x)
+        logits = self.fc2(x)
+
+        return logits.squeeze(-1)  
+    
 MODEL_REGISTRY = {
     'MethylCNNv1': MethylCNNv1,
-    # 'MethylCNNv2': MethylCNNv2, # (when new models are added, note here)
+    'MethylCNNv2': MethylCNNv2,
 }
 
