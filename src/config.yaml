@@ -7,9 +7,6 @@ model:
     feature_set: 'hemi'
 
 data:
-  stats_path: 'path/within/project/to/dataset_stats.json'
-  train_path: 'path to training set'
-  test_path: 'path to test set'
   restrict_row_groups: 2
 
 training:

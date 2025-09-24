@@ -12,13 +12,15 @@ from typing import Dict, List, Any, Optional
 from .evaluate import evaluate 
 from .model import FeatureSet, MethylCNNv2, MODEL_REGISTRY 
 from .dataset import MethylIterableDataset
-from .evaluate import evaluate
 
 def get_args():
     """Parses command-line arguments for training."""
     parser = argparse.ArgumentParser(description="Train a methylation classifier.")
-    parser.add_argument('config_path', type=str)
-    parser.add_argument('--output-model-path', type=str, required=True)
+    parser.add_argument('--config-path', type=str, required=True)
+    parser.add_argument('--train-data-path', type=str, required=True)
+    parser.add_argument('--test-data-path', type=str, required=True)
+    parser.add_argument('--stats-path', type=str, required=True)
+    parser.add_argument('--output-path', type=str, required=True)
     parser.add_argument('--num-workers', type=int, default=8)
     return parser.parse_args()
 
@@ -32,14 +34,10 @@ def parse_stats(stats_path):
             stats = yaml.safe_load(f)
         return stats 
 
-class Split(StrEnum):
-    TRAIN = auto() # Value will be 'train'
-    TEST = auto()  # Value will be 'test'
 
-def make_dataloader(split, config, stats, args):
+def make_dataloader(config, stats, data_path):
     dataset_params = config['data']
     training_params = config['training']
-    data_path = config['data'][f'{split}_path']
     
     dataset = MethylIterableDataset(
         data_path,
@@ -53,11 +51,11 @@ def make_dataloader(split, config, stats, args):
     dataloader = DataLoader(
         dataset,
         batch_size=training_params['batch_size'],
-        num_workers=args.num_workers,
+        num_workers=config['num_workers'],
         drop_last=True,
         pin_memory=True,
-        persistent_workers=True if args.num_workers > 0 else False,
-        prefetch_factor=32 if args.num_workers > 0 else None
+        persistent_workers=True if config['num_workers'] > 0 else False,
+        prefetch_factor=32 if config['num_workers'] > 0 else None
     )
     
     return dataloader
@@ -149,13 +147,16 @@ def main():
 
     ### INSTANTIATION ###
     # dataloaders
-    train_dl = make_dataloader(Split.TRAIN, config, stats, args)
-    test_dl = make_dataloader(Split.TEST, config, stats, args)
+    train_dl = make_dataloader(config, stats, args.train_data_path)
+    test_dl = make_dataloader(config, stats, args.test_data_path)
+    print("created dataloaders")
     # model
     ModelClass = MODEL_REGISTRY[config['model']['architecture']]
+    print("instantiated model class")
     model_params = config['model'].get('params', {})
     model = ModelClass(feature_set = feature_set, **model_params)
     model.to(device)
+    # loaded model weights
     # criterion
     criterion = make_criterion(config['training']['criterion'])
     # optimizer 
@@ -177,17 +178,17 @@ def main():
     })
 
     # Derive the log path from the model path
-    log_path = args.output_model_path.replace('.pt', '_log.csv')
+    log_path = args.output_path.replace('.pt', '_log.csv')
     print(f"Saving training log to {log_path}")
     stats_df.write_csv(log_path)
     # ensure output path existence
-    os.makedirs(os.path.dirname(args.output_model_path), exist_ok=True)
+    os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
     saved_config = config.copy()
 
     torch.save({
         'config': saved_config,
         'model_state_dict': model.state_dict(),
-    }, args.output_model_path)
+    }, args.output_path)
     print("Model saved successfully.")
 
 if __name__ == '__main__':

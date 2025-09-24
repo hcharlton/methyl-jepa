@@ -6,6 +6,7 @@ from gwf import AnonymousTarget
 CONFIG = {
     'project_root': '/home/chcharlton/mutationalscanning/Workspaces/chcharlton/methyl-jepa',
     'gdk_account': 'mutationalscanning',
+    'config_path': 'src/config.yaml',
 
     # --- Data Creation ---
     'pos_bam_path': "data/raw/methylated_hifi_reads.bam",
@@ -23,6 +24,8 @@ CONFIG = {
     'epochs': 10,
     'batch_size': 8192,
     'learning_rate': 0.001,
+    'artifact_path': 'models/train_model_test_output.pt',
+    'num_workers': 8,
 
     # --- Inference ---
     'inference_bam_path': '~/mutationalscanning/DerivedData/bam/HiFi/chimp/martin/kinetics/martin_kinetics_diploid.bam',
@@ -60,12 +63,12 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
 
 def compute_norm_stats(train_parquet_path, output_json_path):
     """Calculates mean/std from the training data."""
-    inputs={'train_set': train_parquet_path}
-    outputs={'stats_file': output_json_path}
+    inputs = {'train_set': train_parquet_path}
+    outputs = {'stats_file': output_json_path}
     options = {'cores': 8, 
                'memory': '16gb', 
                'walltime': '00:00:50'}
-    spec=f"""
+    spec = f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
     cd {p('')}
@@ -75,11 +78,28 @@ def compute_norm_stats(train_parquet_path, output_json_path):
     """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
-# def train
-# inputs: [config.yaml, train.parquet, test.parquet]
-# outputs: [artifact.pt]
-
-# def train(mode_path)
+def train(config_path, train_data_path, test_data_path, stats_path, output_path, num_workers):
+    inputs = {'config': config_path, 
+              'train_data_path': train_data_path,
+              'test_data_path': test_data_path,
+              'stats_path': stats_path,}
+    outputs = {'artifact': output_path}
+    options = {'cores': 8, 
+               'memory': '16gb', 
+               'walltime': '00:00:50'}
+    spec  = f"""
+    source $(conda info --base)/etc/profile.d/conda.sh
+    conda activate methyl-dev
+    cd {p('')}
+    python -m src.train \\
+    --config-path  {config_path} \\
+    --train-data-path {train_data_path} \\
+    --test-data-path {test_data_path} \\
+    --stats-path {stats_path} \\
+    --output-path {output_path} \\
+    --num-workers {num_workers}
+    """
+    return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
 # def infer
 
@@ -105,6 +125,19 @@ stats_target = gwf.target_from_template(
     template=compute_norm_stats(
         train_parquet_path=data_target.outputs['train_ds'],
         output_json_path=p(CONFIG['norm_stats_path'])
+    )
+)
+
+# train a model
+train_target = gwf.target_from_template(
+    name='train',
+    template=train(
+        config_path=CONFIG['config_path'],
+        train_data_path=data_target.outputs['train_ds'],
+        test_data_path=data_target.outputs['test_ds'],
+        stats_path=stats_target.outputs['stats_file'],
+        output_path=CONFIG['artifact_path'],
+        num_workers=CONFIG['num_workers']
     )
 )
 

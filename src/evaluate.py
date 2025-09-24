@@ -6,7 +6,7 @@ from typing import Dict, List, Any, Optional
 
 
 
-def evaluate_model(
+def evaluate(
     model: nn.Module,
     data_loader: DataLoader,
     criterion: nn.Module,
