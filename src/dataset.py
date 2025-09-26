@@ -144,9 +144,11 @@ class MethylIterableDataset(IterableDataset):
     if worker_info == None:
       iter_start = 0
       if not self.restrict_row_groups:
+         safe_row_groups = self.num_row_groups
          iter_end = self.num_row_groups
       else:
-         iter_end = self.restrict_row_groups
+         safe_row_groups = min(self.restrict_row_groups, self.num_row_groups)
+         iter_end = safe_row_groups
         
     else:
       if not self.restrict_row_groups:
@@ -155,10 +157,10 @@ class MethylIterableDataset(IterableDataset):
         iter_start = worker_id * per_worker
         iter_end = min(iter_start + per_worker, self.num_row_groups)
       else:
-        per_worker = int(np.ceil(self.restrict_row_groups / float(worker_info.num_workers)))
+        per_worker = int(np.ceil(safe_row_groups / float(worker_info.num_workers)))
         worker_id = worker_info.id
         iter_start = worker_id * per_worker
-        iter_end = min(iter_start + per_worker, self.restrict_row_groups)
+        iter_end = min(iter_start + per_worker, safe_row_groups)
     row_group_indices = range(iter_start, iter_end)
     
     for i in row_group_indices:

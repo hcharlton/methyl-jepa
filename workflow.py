@@ -15,13 +15,13 @@ CONFIG = {
     'test_ds_path': 'data/processed/pacbio_standard_test.parquet',
     'norm_stats_path': 'data/processed/norm_stats.yaml',
     'train_prop': 0.8,
-    'n_reads': 10,
+    'n_reads': 10_000,
     'context_size': 32,
 
     # --- Model & Training ---
     'model_architecture': 'MethylCNNv1',
     'feature_set': 'hemi', 
-    'epochs': 10,
+    'epochs': 4,
     'batch_size': 8192,
     'learning_rate': 0.001,
     'artifact_path': 'models/train_model_test_output.pt',
@@ -44,7 +44,7 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
     """Creates train and test datasets"""
     inputs = {'pos_bam': pos_bam, 'neg_bam': neg_bam}
     outputs = {'train_ds': train_out, 'test_ds': test_out}
-    options = {'cores': 16, 'memory': '64gb', 'walltime': '01:00:00'}
+    options = {'cores': 16, 'memory': '256gb', 'walltime': '01:00:00'}
     spec=f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
@@ -65,9 +65,9 @@ def compute_norm_stats(train_parquet_path, output_json_path):
     """Calculates mean/std from the training data."""
     inputs = {'train_set': train_parquet_path}
     outputs = {'stats_file': output_json_path}
-    options = {'cores': 8, 
-               'memory': '16gb', 
-               'walltime': '00:00:50'}
+    options = {'cores': 16, 
+               'memory': '128gb', 
+               'walltime': '00:10:00'}
     spec = f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
@@ -84,9 +84,11 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_path,
               'test_data_path': test_data_path,
               'stats_path': stats_path,}
     outputs = {'artifact': output_path}
-    options = {'cores': 8, 
-               'memory': '16gb', 
-               'walltime': '00:00:50'}
+    options = {'cores': num_workers, 
+               'memory': '128gb', 
+               'walltime': '01:00:00',
+               'gres': 'gpu:1',
+               'account': f'{CONFIG['gdk_account']} --partition=gpu'}
     spec  = f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-dev

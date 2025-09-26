@@ -3,6 +3,7 @@ import argparse
 import yaml
 import os
 import polars as pl
+import pyarrow.parquet as pq
 from enum import StrEnum, auto
 from torch import nn
 from torch.utils.data import DataLoader
@@ -35,27 +36,29 @@ def parse_stats(stats_path):
         return stats 
 
 
-def make_dataloader(config, stats, data_path):
+def make_dataloader(config, stats, data_path, args, device):
     dataset_params = config['data']
     training_params = config['training']
-    
+    feature_set = FeatureSet(config['model']['params']['feature_set'])
+    single_strand = feature_set == FeatureSet.HEMI
+    pin_memory = device == 'gpu'
     dataset = MethylIterableDataset(
         data_path,
         means= stats['means'],
         stds=stats['stds'],
-        context=dataset_params['context'],
+        context=config['model']['params']['sequence_length'],
         restrict_row_groups=dataset_params['restrict_row_groups'],
-        single_strand=dataset_params['single_strand']
+        single_strand=single_strand
     )
     
     dataloader = DataLoader(
         dataset,
         batch_size=training_params['batch_size'],
-        num_workers=config['num_workers'],
+        num_workers=args.num_workers,
         drop_last=True,
-        pin_memory=True,
-        persistent_workers=True if config['num_workers'] > 0 else False,
-        prefetch_factor=32 if config['num_workers'] > 0 else None
+        pin_memory=pin_memory,
+        persistent_workers=True if args.num_workers > 0 else False,
+        prefetch_factor=32 if args.num_workers > 0 else None
     )
     
     return dataloader
@@ -81,7 +84,7 @@ def train(config, device, model, optimizer, criterion, train_dl, test_dl):
     epoch_test_losses = []
     epoch_test_acc = []
 
-    for _ in range(config['epochs']):
+    for _ in range(config['training']['epochs']):
         model.train()
         running_loss = 0.0
         total_samples = 0
@@ -124,7 +127,7 @@ def train(config, device, model, optimizer, criterion, train_dl, test_dl):
 def get_featureset_class(config):
     try:
         # Pop the string value from the params dict
-        feature_set_str = config['model'].pop('feature_set')
+        feature_set_str = config['model']['params']['feature_set']
         # Convert the string to a FeatureSet Enum member
         feature_set_enum = FeatureSet(feature_set_str)
         return feature_set_enum
@@ -137,7 +140,6 @@ def main():
     # get set up information
     args = get_args()
     config = parse_config(args.config_path)
-    feature_set = get_featureset_class(config)
     stats = parse_stats(args.stats_path)['log_norm']
     # convert string featureset to enum
     
@@ -147,14 +149,16 @@ def main():
 
     ### INSTANTIATION ###
     # dataloaders
-    train_dl = make_dataloader(config, stats, args.train_data_path)
-    test_dl = make_dataloader(config, stats, args.test_data_path)
+    print(pq.read_metadata(args.train_data_path))
+    train_dl = make_dataloader(config, stats, args.train_data_path, args, device)
+    test_dl = make_dataloader(config, stats, args.test_data_path, args, device)
     print("created dataloaders")
+    print(next(iter(train_dl)))
     # model
     ModelClass = MODEL_REGISTRY[config['model']['architecture']]
     print("instantiated model class")
     model_params = config['model'].get('params', {})
-    model = ModelClass(feature_set = feature_set, **model_params)
+    model = ModelClass(FeatureSet(model_params.pop('feature_set')), **model_params)
     model.to(device)
     # loaded model weights
     # criterion

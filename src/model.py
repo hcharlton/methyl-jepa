@@ -12,6 +12,7 @@ class FeatureSet(Enum):
   NUCLEOTIDES = "nucleotides"
   KINETICS = "kinetics"
   ALL = "all"
+  HEMI = 'hemi'
 
 class ConvBlock(nn.Module):
   def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding='same'):
@@ -55,18 +56,18 @@ class ResBlock(nn.Module):
 
 
 class MethylCNNv1(nn.Module):
-    def __init__(self, features: FeatureSet, sequence_length = 32, num_classes = 2, dropout_p = 0.1):
+    def __init__(self, feature_set: FeatureSet, sequence_length = 32, num_classes = 2, dropout_p = 0.1):
         super(MethylCNNv1, self).__init__()
 
-        self.features = features
+        self.feature_set = feature_set
         self.sequence_length = sequence_length
         self.num_classes = num_classes
 
-        if self.features == FeatureSet.NUCLEOTIDES:
+        if self.feature_set == FeatureSet.NUCLEOTIDES:
           self.in_channels = 4
-        elif self.features == FeatureSet.KINETICS:
+        elif self.feature_set == FeatureSet.KINETICS:
           self.in_channels = 4
-        elif self.features == FeatureSet.ALL:
+        elif self.feature_set == FeatureSet.ALL:
           self.in_channels = 8
         else:
           raise ValueError('Invalid feature set. See FeatureSet class.')
@@ -116,11 +117,11 @@ class MethylCNNv1(nn.Module):
         kinetics = batch['kinetics']
 
         # the input is a dictionary, so convert to a tensor
-        if self.features == FeatureSet.NUCLEOTIDES:
+        if self.feature_set == FeatureSet.NUCLEOTIDES:
           x = seq.to(self.fc1.weight.dtype) # -> [B, 4, L]
-        elif self.features == FeatureSet.KINETICS:
+        elif self.feature_set == FeatureSet.KINETICS:
           x = kinetics.to(self.fc1.weight.dtype) # -> [B, 4, L]
-        elif self.features == FeatureSet.ALL:
+        elif self.feature_set == FeatureSet.ALL:
           x = torch.cat([seq, kinetics], dim=1).to(self.fc1.weight.dtype) # -> [B, 8, L]
 
         x = self._extract_features(x)
@@ -133,20 +134,20 @@ class MethylCNNv1(nn.Module):
         return logits
     
 class MethylCNNv2(nn.Module):
-    def __init__(self, features: FeatureSet, sequence_length = 32, num_classes = 2, dropout_p = 0.1):
+    def __init__(self, feature_set: FeatureSet, sequence_length = 32, num_classes = 2, dropout_p = 0.1):
         super().__init__()
 
-        self.features = features
+        self.feature_set = feature_set
         self.sequence_length = sequence_length
         self.num_classes = num_classes
 
-        if self.features == FeatureSet.NUCLEOTIDES:
+        if self.feature_set == FeatureSet.NUCLEOTIDES:
           self.in_channels = 4
-        elif self.features == FeatureSet.KINETICS:
+        elif self.feature_set == FeatureSet.KINETICS:
           self.in_channels = 4
-        elif self.features == FeatureSet.ALL:
+        elif self.feature_set == FeatureSet.ALL:
           self.in_channels = 8
-        elif self.features == FeatureSet.HEMI:
+        elif self.feature_set == FeatureSet.HEMI:
           self.in_channels = 6
         else:
           raise ValueError('Invalid feature set. See FeatureSet class.')
@@ -203,13 +204,13 @@ class MethylCNNv2(nn.Module):
         kinetics = batch['kinetics']
 
         # the input is a dictionary, so convert to a tensor
-        if self.features == FeatureSet.NUCLEOTIDES:
+        if self.feature_set == FeatureSet.NUCLEOTIDES:
           x = seq.to(self.fc1.weight.dtype) # -> [B, 4, L=32]
-        elif self.features == FeatureSet.KINETICS:
+        elif self.feature_set == FeatureSet.KINETICS:
           x = kinetics.to(self.fc1.weight.dtype) # -> [B, 4, L=32]
-        elif self.features == FeatureSet.ALL:
+        elif self.feature_set == FeatureSet.ALL:
           x = torch.cat([seq, kinetics], dim=1).to(self.fc1.weight.dtype) # -> [B, 8, L=32]
-        elif self.features == FeatureSet.HEMI:
+        elif self.feature_set == FeatureSet.HEMI:
           x = torch.cat([seq, kinetics], dim=1).to(self.fc1.weight.dtype) # -> [6, 8, L=32]
 
         x = self._extract_features(x)

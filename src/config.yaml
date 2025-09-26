@@ -7,7 +7,7 @@ model:
     feature_set: 'hemi'
 
 data:
-  restrict_row_groups: 2
+  restrict_row_groups: 10
 
 training:
   epochs: 5
