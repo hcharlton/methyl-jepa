@@ -21,7 +21,8 @@ def get_args():
     parser.add_argument('--train-data-path', type=str, required=True)
     parser.add_argument('--test-data-path', type=str, required=True)
     parser.add_argument('--stats-path', type=str, required=True)
-    parser.add_argument('--output-path', type=str, required=True)
+    parser.add_argument('--output-artifact-path', type=str, required=True)
+    parser.add_argument('--output-log-path', type=str, required=True)
     parser.add_argument('--num-workers', type=int, default=8)
     return parser.parse_args()
 
@@ -140,25 +141,28 @@ def main():
     # get set up information
     args = get_args()
     config = parse_config(args.config_path)
+    # save the config so that if it's modified we save the original
+    config_to_save = config.copy()
+    # read stats for normalizing data
     stats = parse_stats(args.stats_path)['log_norm']
-    # convert string featureset to enum
-    
     # choose device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
     ### INSTANTIATION ###
     # dataloaders
+    # print out metadata
     print(pq.read_metadata(args.train_data_path))
+    # make dl's
     train_dl = make_dataloader(config, stats, args.train_data_path, args, device)
     test_dl = make_dataloader(config, stats, args.test_data_path, args, device)
     print("created dataloaders")
-    print(next(iter(train_dl)))
     # model
     ModelClass = MODEL_REGISTRY[config['model']['architecture']]
     print("instantiated model class")
     model_params = config['model'].get('params', {})
-    model = ModelClass(FeatureSet(model_params.pop('feature_set')), **model_params)
+    feature_set_enum = model_params.pop('feature_set')
+    model = ModelClass(FeatureSet(feature_set_enum), **model_params)
     model.to(device)
     # loaded model weights
     # criterion
@@ -175,24 +179,23 @@ def main():
                            test_dl
                            )
     stats_df = pl.DataFrame({
-        'epoch': range(1, args.epochs + 1),
+        'epoch': range(1, config['training']['epochs'] + 1),
         'train_loss': train_stats['train_losses'],
         'test_loss': train_stats['test_losses'],
         'test_accuracy': train_stats['test_acc']
     })
+    # make output path if it doesn't already exist
+    os.makedirs(os.path.dirname(args.output_artifact_path), exist_ok=True)
+    os.makedirs(os.path.dirname(args.output_log_path), exist_ok=True)
 
     # Derive the log path from the model path
-    log_path = args.output_path.replace('.pt', '_log.csv')
-    print(f"Saving training log to {log_path}")
-    stats_df.write_csv(log_path)
-    # ensure output path existence
-    os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
-    saved_config = config.copy()
+    print(f"Saving training log to {args.output_log_path}")
+    stats_df.write_csv(args.output_log_path)
 
     torch.save({
-        'config': saved_config,
+        'config': config_to_save,
         'model_state_dict': model.state_dict(),
-    }, args.output_path)
+    }, args.output_artifact_path)
     print("Model saved successfully.")
 
 if __name__ == '__main__':

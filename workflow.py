@@ -15,16 +15,19 @@ CONFIG = {
     'test_ds_path': 'data/processed/pacbio_standard_test.parquet',
     'norm_stats_path': 'data/processed/norm_stats.yaml',
     'train_prop': 0.8,
-    'n_reads': 10_000,
+    'n_reads': 0,
     'context_size': 32,
 
     # --- Model & Training ---
     'model_architecture': 'MethylCNNv1',
     'feature_set': 'hemi', 
-    'epochs': 4,
+    'epochs': 10,
     'batch_size': 8192,
     'learning_rate': 0.001,
-    'artifact_path': 'models/train_model_test_output.pt',
+    'output_artifact_path': 'models/v_1_model_artifact.pt',
+    'output_artifact_path_cpu': 'models/v1_model_artifact_cpu.pt',
+    'output_log_path': 'models/v1_model_log.csv',
+    'output_log_path_cpu': 'models/v1_model_log_cpu.csv',
     'num_workers': 8,
 
     # --- Inference ---
@@ -44,7 +47,7 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
     """Creates train and test datasets"""
     inputs = {'pos_bam': pos_bam, 'neg_bam': neg_bam}
     outputs = {'train_ds': train_out, 'test_ds': test_out}
-    options = {'cores': 16, 'memory': '256gb', 'walltime': '01:00:00'}
+    options = {'cores': 32, 'memory': '700gb', 'walltime': '02:00:00'}
     spec=f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
@@ -78,29 +81,49 @@ def compute_norm_stats(train_parquet_path, output_json_path):
     """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
-def train(config_path, train_data_path, test_data_path, stats_path, output_path, num_workers):
+def train(config_path, train_data_path, test_data_path, stats_path, output_artifact_path, output_log_path, num_workers, gpu = True):
     inputs = {'config': config_path, 
               'train_data_path': train_data_path,
               'test_data_path': test_data_path,
               'stats_path': stats_path,}
-    outputs = {'artifact': output_path}
-    options = {'cores': num_workers, 
-               'memory': '128gb', 
-               'walltime': '01:00:00',
-               'gres': 'gpu:1',
-               'account': f'{CONFIG['gdk_account']} --partition=gpu'}
-    spec  = f"""
-    source $(conda info --base)/etc/profile.d/conda.sh
-    conda activate methyl-dev
-    cd {p('')}
-    python -m src.train \\
-    --config-path  {config_path} \\
-    --train-data-path {train_data_path} \\
-    --test-data-path {test_data_path} \\
-    --stats-path {stats_path} \\
-    --output-path {output_path} \\
-    --num-workers {num_workers}
-    """
+    outputs = {'artifact': output_artifact_path}
+    if gpu: 
+        options = {'cores': num_workers, 
+                'memory': '128gb', 
+                'walltime': '01:00:00',
+                'gres': 'gpu:1',
+                'account': f'{CONFIG['gdk_account']} --partition=gpu'}
+        spec  = f"""
+        source $(conda info --base)/etc/profile.d/conda.sh
+        conda activate methyl-dev
+        cd {p('')}
+        python -m src.train \\
+        --config-path  {config_path} \\
+        --train-data-path {train_data_path} \\
+        --test-data-path {test_data_path} \\
+        --stats-path {stats_path} \\
+        --output-artifact-path {output_artifact_path} \\
+        --output-log-path {output_log_path} \\
+        --num-workers {num_workers}
+        """
+    else: 
+        options = {'cores': num_workers, 
+                'memory': '128gb', 
+                'walltime': '01:00:00'
+                }
+        spec  = f"""
+        source $(conda info --base)/etc/profile.d/conda.sh
+        conda activate methyl-dev
+        cd {p('')}
+        python -m src.train \\
+        --config-path  {config_path} \\
+        --train-data-path {train_data_path} \\
+        --test-data-path {test_data_path} \\
+        --stats-path {stats_path} \\
+        --output-artifact-path {output_artifact_path} \\
+        --output-log-path {output_log_path} \\
+        --num-workers {num_workers}
+        """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
 # def infer
@@ -130,7 +153,7 @@ stats_target = gwf.target_from_template(
     )
 )
 
-# train a model
+# train model with gpu
 train_target = gwf.target_from_template(
     name='train',
     template=train(
@@ -138,10 +161,26 @@ train_target = gwf.target_from_template(
         train_data_path=data_target.outputs['train_ds'],
         test_data_path=data_target.outputs['test_ds'],
         stats_path=stats_target.outputs['stats_file'],
-        output_path=CONFIG['artifact_path'],
+        output_artifact_path=CONFIG['output_artifact_path'],
+        output_log_path=CONFIG['output_log_path'],
         num_workers=CONFIG['num_workers']
     )
 )
+
+# # train model with cpu
+# train_cpu_target = gwf.target_from_template(
+#     name='train_cpu',
+#     template=train(
+#         config_path=CONFIG['config_path'],
+#         train_data_path=data_target.outputs['train_ds'],
+#         test_data_path=data_target.outputs['test_ds'],
+#         stats_path=stats_target.outputs['stats_file'],
+#         output_artifact_path=CONFIG['output_artifact_path_cpu'],
+#         output_log_path=CONFIG['output_log_path_cpu'],
+#         num_workers=CONFIG['num_workers'],
+#         gpu=False
+#     )
+# )
 
 # model training
 # inference
