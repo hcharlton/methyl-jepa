@@ -3,6 +3,7 @@ import argparse
 import yaml
 import os
 import polars as pl
+import copy
 import pyarrow.parquet as pq
 from enum import StrEnum, auto
 from torch import nn
@@ -142,7 +143,7 @@ def main():
     args = get_args()
     config = parse_config(args.config_path)
     # save the config so that if it's modified we save the original
-    config_to_save = config.copy()
+    config_to_save = copy.deepcopy(config)
     # read stats for normalizing data
     stats = parse_stats(args.stats_path)['log_norm']
     # choose device

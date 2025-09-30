@@ -7,13 +7,11 @@
 
 # OUTPUTS
 # parquet file of inferences which includes columns of:
-# - sample features
-# - loss
-# - p(methylation)
+# - data features
+# - model output: p(methylation)
 
 import torch
 import polars as pl
-import altair as alt
 import os
 import pyarrow.parquet as pq
 import sys
@@ -21,6 +19,7 @@ import json
 import numpy as np
 import torch.nn.functional as F
 import argparse
+import yaml
 
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader, IterableDataset
@@ -33,8 +32,6 @@ from src.dataset import MethylIterableDataset
 from src.model import MethylCNNv2, FeatureSet, MODEL_REGISTRY
 
 # --- Configuration ---
-# for large datasets (vastly improves max size)
-alt.data_transformers.enable("vegafusion")
 # printing long strings config
 pl.Config(fmt_str_lengths=50)
 # for the workers in the iterable dataset
@@ -42,15 +39,20 @@ torch.multiprocessing.set_start_method('spawn', force=True)
 
 
 
-def parse_artifact(artifact_path, device):
+def parse_artifact(artifact_path):
     """Loads a model with its corresponding architecture and configuration."""
-    checkpoint = torch.load(artifact_path, map_location=device)
+    checkpoint = torch.load(artifact_path)
 
     config = checkpoint['config']
     model_state_dict = checkpoint['model_state_dict']
 
     return config, model_state_dict
     
+def parse_stats(stats_path):
+        with open(stats_path, 'r') as f:
+            stats = yaml.safe_load(f)
+        return stats 
+
 def load_model(model_state_dict, config, device):
     # 1. Get architecture name and arguments from the file
     ModelClass = MODEL_REGISTRY[config['model']['architecture']]
@@ -71,10 +73,6 @@ def get_args():
     parser.add_argument('--output-path', type=str, required=True, help='Path to save the output Parquet file.')
 
     # Optional arguments
-    parser.add_argument('--batch-size', 
-                        type=int, 
-                        default=8192, 
-                        help='Batch size for inference.')
     parser.add_argument('--num-workers',
                          type=int,
                          default=8,
@@ -92,9 +90,7 @@ def infer(
     device: torch.device,
     ) -> torch.Tensor:
     model.eval()
-    losses_all: List[torch.Tensor] = []
     probs_all: List[torch.Tensor] = []
-    labels_all: List[torch.Tensor] = []
     strand_all = []
     pos_all = []
     read_name_all = []
@@ -122,9 +118,39 @@ def infer(
         'prob': torch.cat(probs_all).numpy(),
     })
 
+def make_dataloader(config, stats, data_path, args, device):
+    dataset_params = config['data']
+    training_params = config['training']
+    feature_set = FeatureSet(config['model']['params']['feature_set'])
+    single_strand = feature_set == FeatureSet.HEMI
+    pin_memory = device == 'gpu'
+    dataset = MethylIterableDataset(
+        data_path,
+        means= stats['means'],
+        stds=stats['stds'],
+        context=config['model']['params']['sequence_length'],
+        restrict_row_groups=dataset_params['restrict_row_groups'],
+        single_strand=single_strand,
+        inference=True
+    )
+    
+    dataloader = DataLoader(
+        dataset,
+        batch_size=training_params['batch_size'],
+        num_workers=args.num_workers,
+        drop_last=True,
+        pin_memory=pin_memory,
+        persistent_workers=True if args.num_workers > 0 else False,
+        prefetch_factor=32 if args.num_workers > 0 else None
+    )
+    
+    return dataloader
+
 def main():
     args = get_args()
     config, model_state_dict = parse_artifact(args.artifact_path)
+    stats = parse_stats(args.stats_path)['log_norm']
+    print('loaded paramters for inference')
     # --- Set up device ---
     device = torch.device(
         "cuda" if torch.cuda.is_available()
@@ -132,36 +158,22 @@ def main():
         else "cpu"
     )
 
-    # --- Load Train-DS Normalization Stats
-    with open(args.stats_path, 'r') as f:
-        stats = json.load(f)
-    train_means = stats['means']
-    train_stds = stats['stds']
-
     # --- Setup Model ---
     model = load_model(model_state_dict, config, device)
     model.to(device)
-
+    print ("instantiated model")
     # --- Set up DataLoader --- 
-    ds = MethylIterableDataset(args.data_path,
-                                    means=train_means,
-                                    stds=train_stds,
-                                    context=32,
-                                    restrict_row_groups=args.restrict_row_groups,
-                                    single_strand=args.single_strand)
-    dl = DataLoader(ds,
-                            batch_size=args.batch_size,
-                            drop_last=True,
-                            num_workers=args.num_workers,
-                            pin_memory=True,
-                            persistent_workers=True,
-                            prefetch_factor=32)
-
+    dl = make_dataloader(config, stats, args.data_path, args, device)
+    print("instantiated dataloader")
     # --- Run Inference ---
-
+    df = infer(model, dl, device)
+    print('ran inference')
     # --- Save Results ---
+    os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
+    df.write_parquet(args.output_path)
+    print("wrote out inference file")
 
-
-
+if __name__ == '__main__':
+    main()
 
 

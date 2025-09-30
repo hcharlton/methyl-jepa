@@ -95,21 +95,10 @@ class MethylIterableDataset(IterableDataset):
       axis=1
       )
     kinetics_tensor = torch.tensor(kinetics_array, dtype=torch.float32)
-    ### Theoretically this should be faster, but it doesn't work
-    # kinetics_exprs = [
-    #     pl.col(c).arr.to_list().list.eval(
-    #         (pl.element().add(1).log() - self.means[c]) / self.stds[c]
-    #     )
-    #     for c in self.kinetics_features
-    # ]
     
-    # kinetics_tensor = torch.tensor(
-    #    row_group_df.select(kinetics_exprs).to_numpy(), 
-    #    dtype=torch.float32
-    #    ).permute(1, 0).reshape(-1, 4, self.context)
-    
-    # labels
-    label_tensor = torch.tensor(row_group_df['label'].to_numpy(), dtype=torch.long)
+    # labels, if not inference
+    if not self.inference:
+      label_tensor = torch.tensor(row_group_df['label'].to_numpy(), dtype=torch.long)
     # read_name
     read_names = row_group_df['read_name'].to_list()
     positions = row_group_df['cg_pos'].to_list()
@@ -122,22 +111,29 @@ class MethylIterableDataset(IterableDataset):
       fwd_kinetics = kinetics_tensor[:, 0:2, :]
       rev_kinetics = torch.flip(kinetics_tensor[:, 2:4, :], dims=[2])
       for i in range(len(row_group_df)):
-          yield {'seq': seq_one_hot[i], 
-                 'kinetics': fwd_kinetics[i], 
-                 'label': label_tensor[i],
-                  'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'fwd'}}
-          yield {'seq': rev_comp_seq_one_hot[i], 
-                 'kinetics': rev_kinetics[i], 
-                 'label': label_tensor[i],
-                 'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'rev'}}
+          fwd_item = {'seq': seq_one_hot[i], 
+                      'kinetics': fwd_kinetics[i], 
+                      'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'fwd'}}
+          if not self.is_inference:
+              fwd_item['label'] = label_tensor[i]
+          yield fwd_item
+
+          rev_item = {'seq': rev_comp_seq_one_hot[i], 
+                      'kinetics': rev_kinetics[i], 
+                      'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'rev'}}
+          if not self.is_inference:
+              rev_item['label'] = label_tensor[i]
+          yield rev_item
     else:
        for i in range(len(row_group_df)):
-              yield {
-                  'seq': seq_one_hot[i],
-                  'kinetics': kinetics_tensor[i],
-                  'label': label_tensor[i],
-                   'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'ds'}
-                   }
+            item = {
+                'seq': seq_one_hot[i],
+                'kinetics': kinetics_tensor[i],
+                'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'ds'}
+            }
+            if not self.is_inference:
+                item['label'] = label_tensor[i]
+            yield item
        
         
   def __iter__(self):

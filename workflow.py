@@ -85,7 +85,8 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_artif
     inputs = {'config': config_path, 
               'train_data_path': train_data_path,
               'test_data_path': test_data_path,
-              'stats_path': stats_path,}
+              'stats_path': stats_path,
+              }
     outputs = {'artifact': output_artifact_path}
     if gpu: 
         options = {'cores': num_workers, 
@@ -126,7 +127,30 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_artif
         """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
-# def infer
+def infer(artifact_path, data_path, stats_path, output_path, num_workers, row_groups):
+    inputs = {'artifact': artifact_path,
+              'data_path': data_path,
+              'stats_path': stats_path
+              }
+    outputs = {'inference_out': output_path}
+    options = {'cores': num_workers, 
+                'memory': '128gb', 
+                'walltime': '0:30:00',
+                'gres': 'gpu:1',
+                'account': f'{CONFIG['gdk_account']} --partition=gpu'}
+    spec  = f"""
+    source $(conda info --base)/etc/profile.d/conda.sh
+    conda activate methyl-dev
+    cd {p('')}
+    python -m src.infer \\
+    --artifact-path {artifact_path}\\
+    --data-path {data_path} \\
+    --stats-path {stats_path} \\
+    --output-path {output_path} \\
+    --num-workers {num_workers} \\
+    --restrict-row-groups {row_groups}
+    """
+    return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
 ### WORKFLOW GRAPH
 
@@ -167,6 +191,15 @@ train_target = gwf.target_from_template(
     )
 )
 
+infer_target = gwf.target_from_template(
+    name = 'infer',
+    template = infer(artifact_path=train_target.outputs['artifact'], 
+                     data_path=data_target.outputs['test_ds'], 
+                     stats_path=stats_target.outputs['stats_file'], 
+                     output_path='data/inference/test_inference.parquet', 
+                     num_workers=CONFIG['num_workers'], 
+                     row_groups=1)
+)
 # # train model with cpu
 # train_cpu_target = gwf.target_from_template(
 #     name='train_cpu',
