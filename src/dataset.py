@@ -114,14 +114,14 @@ class MethylIterableDataset(IterableDataset):
           fwd_item = {'seq': seq_one_hot[i], 
                       'kinetics': fwd_kinetics[i], 
                       'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'fwd'}}
-          if not self.is_inference:
+          if not self.inference:
               fwd_item['label'] = label_tensor[i]
           yield fwd_item
 
           rev_item = {'seq': rev_comp_seq_one_hot[i], 
                       'kinetics': rev_kinetics[i], 
                       'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'rev'}}
-          if not self.is_inference:
+          if not self.inference:
               rev_item['label'] = label_tensor[i]
           yield rev_item
     else:
@@ -131,7 +131,7 @@ class MethylIterableDataset(IterableDataset):
                 'kinetics': kinetics_tensor[i],
                 'metadata': {'read_name': read_names[i], 'position': positions[i], 'strand': 'ds'}
             }
-            if not self.is_inference:
+            if not self.inference:
                 item['label'] = label_tensor[i]
             yield item
        
