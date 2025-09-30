@@ -8,22 +8,21 @@ CONFIG = {
     'gdk_account': 'mutationalscanning',
     'config_path': 'src/config.yaml',
 
-    # --- Data Creation ---
-    'pos_bam_path': "data/raw/methylated_hifi_reads.bam",
-    'neg_bam_path': "data/raw/unmethylated_hifi_reads.bam", 
-    'train_ds_path': 'data/processed/pacbio_standard_train.parquet',
-    'test_ds_path': 'data/processed/pacbio_standard_test.parquet',
-    'norm_stats_path': 'data/processed/norm_stats.yaml',
+    # ---Labeled Data (Training) ---
+    'pos_bam_path': "data/00_raw/labeled/methylated_hifi_reads.bam",
+    'neg_bam_path': "data/00_raw/labeled/unmethylated_hifi_reads.bam", 
+    'train_ds_path': 'data/01_processed/train_sets/pacbio_standard_train.parquet',
+    'test_ds_path': 'data/01_processed/train_sets/pacbio_standard_test.parquet',
+    'norm_stats_path': 'data/02_analysis/norm_stats.yaml',
     'train_prop': 0.8,
-    'n_reads': 0,
-    'context_size': 32,
+    'n_reads': 10,
+    'context': 32,
+
+    # --- Unlabeled Data (Inference) ---
+    'martin_bam_path': 'data/00_raw/unlabeled/martin_kinetics_diploid.bam',
+    'martin_ds_path': 'data/01_processed/inference_sets/martin.parquet',
 
     # --- Model & Training ---
-    'model_architecture': 'MethylCNNv1',
-    'feature_set': 'hemi', 
-    'epochs': 10,
-    'batch_size': 8192,
-    'learning_rate': 0.001,
     'output_artifact_path': 'models/v_1_model_artifact.pt',
     'output_artifact_path_cpu': 'models/v1_model_artifact_cpu.pt',
     'output_log_path': 'models/v1_model_log.csv',
@@ -31,10 +30,9 @@ CONFIG = {
     'num_workers': 8,
 
     # --- Inference ---
-    'inference_bam_path': '~/mutationalscanning/DerivedData/bam/HiFi/chimp/martin/kinetics/martin_kinetics_diploid.bam',
-    'n_reads_inference': 1_000_000,
-    'inference_dataset_name': 'martin_ss_v1'
-}
+    'hello_world_inference_output_path': 'results/hello_world_inference.parquet',
+    'martin_inference_output_path': 'results/martin_inference.parquet'
+    }
 
 # resolve paths helper
 def p(path):
@@ -47,7 +45,7 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
     """Creates train and test datasets"""
     inputs = {'pos_bam': pos_bam, 'neg_bam': neg_bam}
     outputs = {'train_ds': train_out, 'test_ds': test_out}
-    options = {'cores': 32, 'memory': '700gb', 'walltime': '02:00:00'}
+    options = {'cores': 32, 'memory': '128gb', 'walltime': '01:00:00'}
     spec=f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
@@ -61,6 +59,22 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
         --context {context} \\
         --train-prop {train_prop}
         """
+    return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
+
+def create_inference_dataset(unlabeled_bam, out_file, n_reads, context):
+    inputs = {'in_bam': unlabeled_bam}
+    outputs = {'out_parquet': out_file}
+    options = {'cores': 32, 'memory': '256gb', 'walltime': '02:00:00'}
+    spec = f"""
+    source $(conda info --base)/etc/profile.d/conda.sh
+    conda activate methyl-jepa
+    cd {p('')}
+    python scripts.make_inference_dataset.py \\
+        -i "~/mutationalscanning/DerivedData/bam/HiFi/chimp/martin/kinetics/martin_kinetics_diploid.bam" \\
+        -n {n_reads} \\
+        -c {context} \\
+        -o {out_file}
+    """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
 
@@ -91,7 +105,7 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_artif
     if gpu: 
         options = {'cores': num_workers, 
                 'memory': '128gb', 
-                'walltime': '01:00:00',
+                'walltime': '02:00:00',
                 'gres': 'gpu:1',
                 'account': f'{CONFIG['gdk_account']} --partition=gpu'}
         spec  = f"""
@@ -152,10 +166,10 @@ def infer(artifact_path, data_path, stats_path, output_path, num_workers, row_gr
     """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
-### WORKFLOW GRAPH
+### ---------- WORKFLOW GRAPH ------------
 
-# train/test datasets
-data_target = gwf.target_from_template(
+### DATA
+train_data_target = gwf.target_from_template(
     name='create_labeled_datasets',
     template=create_train_test_datasets(
         pos_bam=p(CONFIG['pos_bam_path']),
@@ -163,27 +177,36 @@ data_target = gwf.target_from_template(
         train_out=p(CONFIG['train_ds_path']),
         test_out=p(CONFIG['test_ds_path']),
         n_reads=CONFIG['n_reads'],
-        context=CONFIG['context_size'],
+        context=CONFIG['context'],
         train_prop=CONFIG['train_prop']
     )
 )
 
-# normalization stats
+martin_data_target = gwf.target_from_template(
+    name = 'create_martin_dataset',
+    template = create_inference_dataset(
+        unlabeled_bam=CONFIG['martin_bam_path'],
+        out_file=CONFIG['martin_ds_path'],
+        n_reads=10,
+        context=CONFIG['context']
+    )
+)
+
 stats_target = gwf.target_from_template(
     name='compute_stats',
     template=compute_norm_stats(
-        train_parquet_path=data_target.outputs['train_ds'],
+        train_parquet_path=train_data_target.outputs['train_ds'],
         output_json_path=p(CONFIG['norm_stats_path'])
     )
 )
 
-# train model with gpu
+### TRAINING 
 train_target = gwf.target_from_template(
     name='train',
     template=train(
         config_path=CONFIG['config_path'],
-        train_data_path=data_target.outputs['train_ds'],
-        test_data_path=data_target.outputs['test_ds'],
+        train_data_path=train_data_target.outputs['train_ds'],
+        test_data_path=train_data_target.outputs['test_ds'],
         stats_path=stats_target.outputs['stats_file'],
         output_artifact_path=CONFIG['output_artifact_path'],
         output_log_path=CONFIG['output_log_path'],
@@ -191,29 +214,23 @@ train_target = gwf.target_from_template(
     )
 )
 
-infer_target = gwf.target_from_template(
-    name = 'infer',
+### INFERENCE
+hello_world_infer_target = gwf.target_from_template(
+    name = 'hellow_world_infer',
     template = infer(artifact_path=train_target.outputs['artifact'], 
-                     data_path=data_target.outputs['test_ds'], 
+                     data_path=train_data_target.outputs['test_ds'], 
                      stats_path=stats_target.outputs['stats_file'], 
-                     output_path='data/inference/test_inference.parquet', 
+                     output_path='results/hello_world_inference.parquet', 
                      num_workers=CONFIG['num_workers'], 
                      row_groups=1)
 )
-# # train model with cpu
-# train_cpu_target = gwf.target_from_template(
-#     name='train_cpu',
-#     template=train(
-#         config_path=CONFIG['config_path'],
-#         train_data_path=data_target.outputs['train_ds'],
-#         test_data_path=data_target.outputs['test_ds'],
-#         stats_path=stats_target.outputs['stats_file'],
-#         output_artifact_path=CONFIG['output_artifact_path_cpu'],
-#         output_log_path=CONFIG['output_log_path_cpu'],
-#         num_workers=CONFIG['num_workers'],
-#         gpu=False
-#     )
-# )
 
-# model training
-# inference
+martin_inference_target = gwf.target_from_template(
+    name = 'martin_inference',
+    template = infer(artifact_path=train_target.outputs['artifact'], 
+                     data_path=martin_data_target.outputs['out_parquet'], 
+                     stats_path=stats_target.outputs['stats_file'], 
+                     output_path=CONFIG['martin_inference_output_path'], 
+                     num_workers=CONFIG['num_workers'], 
+                     row_groups=1)
+)

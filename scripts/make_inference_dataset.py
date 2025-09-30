@@ -177,10 +177,10 @@ def main():
                         type=int,
                         required=True,
                         help='How many base pairs to extract for each sample, including the CG pair.')
-    parser.add_argument('-o', '--output_name',
+    parser.add_argument('-o', '--output_path',
                         type=str,
                         required=True,
-                        help="The output file name")
+                        help="path for output file")
     parser.add_argument('--singletons',
                         action='store_true',
                         help="If specified, restrict samples to contain only one CG instance. Defaults to False if not specified.")
@@ -196,7 +196,7 @@ def main():
 
 
 
-    df.write_parquet(f'../data/processed/{args.output_name}.parquet')
+    df.write_parquet(args.output_path)
 
 if __name__ == "__main__":
     main()
