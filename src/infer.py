@@ -20,6 +20,7 @@ import numpy as np
 import torch.nn.functional as F
 import argparse
 import yaml
+import copy
 
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader, IterableDataset
@@ -53,12 +54,14 @@ def parse_stats(stats_path):
             stats = yaml.safe_load(f)
         return stats 
 
-def load_model(model_state_dict, config, device):
-    # 1. Get architecture name and arguments from the file
+def load_model(model_state_dict, config):
+    config = copy.deepcopy(config)
     ModelClass = MODEL_REGISTRY[config['model']['architecture']]
-    model_params = config['model'].get('params', {})
-    feature_set_enum = model_params.pop('feature_set')
-    model = ModelClass(FeatureSet(feature_set_enum), **model_params)
+    model_params = config['model'].get('params', {}).copy()
+    feature_set_str = model_params.pop('feature_set')
+    feature_set_enum = FeatureSet(feature_set_str)
+
+    model = ModelClass(feature_set=feature_set_enum, **model_params)
     model.load_state_dict(model_state_dict)
     return model
 
@@ -159,7 +162,7 @@ def main():
     )
 
     # --- Setup Model ---
-    model = load_model(model_state_dict, config, device)
+    model = load_model(model_state_dict, config)
     model.to(device)
     print ("instantiated model")
     # --- Set up DataLoader --- 
