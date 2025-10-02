@@ -1,0 +1,23 @@
+model:
+  architecture: 'MethylCNNv2'
+  params:
+    sequence_length: 32
+    num_classes: 2
+    dropout_p: 0.1
+    feature_set: 'hemi'
+
+data:
+  restrict_row_groups: 1
+
+training:
+  epochs: 1
+  batch_size: 256
+  criterion: 
+    name: 'BCEWithLogitsLoss'
+    params: {}
+  optimizer: 
+    name: 'AdamW'
+    weight_decay: 1.0e-2
+    betas: [0.9, 0.999]
+    eps: 1.0e-08
+    lr: 0.001

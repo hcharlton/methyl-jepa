@@ -7,10 +7,10 @@ model:
     feature_set: 'hemi'
 
 data:
-  restrict_row_groups: 10
+  restrict_row_groups: 0
 
 training:
-  epochs: 5
+  epochs: 10
   batch_size: 8192
   criterion: 
     name: 'BCEWithLogitsLoss'

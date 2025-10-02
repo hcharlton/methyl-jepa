@@ -15,7 +15,7 @@ CONFIG = {
     'test_ds_path': 'data/01_processed/train_sets/pacbio_standard_test.parquet',
     'norm_stats_path': 'data/02_analysis/norm_stats.yaml',
     'train_prop': 0.8,
-    'n_reads': 10,
+    'n_reads': 600_000,
     'context': 32,
 
     # --- Unlabeled Data (Inference) ---
@@ -45,7 +45,7 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
     """Creates train and test datasets"""
     inputs = {'pos_bam': pos_bam, 'neg_bam': neg_bam}
     outputs = {'train_ds': train_out, 'test_ds': test_out}
-    options = {'cores': 32, 'memory': '128gb', 'walltime': '01:00:00'}
+    options = {'cores': 32, 'memory': '256gb', 'walltime': '02:00:00'}
     spec=f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
@@ -55,7 +55,7 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
         --neg-bam {neg_bam} \\
         --train-output {train_out} \\
         --test-output {test_out} \\
-        --n-reads {n_reads} \\
+        --n-reads {600_000} \\
         --context {context} \\
         --train-prop {train_prop}
         """
@@ -64,13 +64,13 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
 def create_inference_dataset(unlabeled_bam, out_file, n_reads, context):
     inputs = {'in_bam': unlabeled_bam}
     outputs = {'out_parquet': out_file}
-    options = {'cores': 32, 'memory': '256gb', 'walltime': '02:00:00'}
+    options = {'cores': 32, 'memory': '512gb', 'walltime': '03:00:00'}
     spec = f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
     cd {p('')}
-    python scripts.make_inference_dataset.py \\
-        -i "~/mutationalscanning/DerivedData/bam/HiFi/chimp/martin/kinetics/martin_kinetics_diploid.bam" \\
+    python -m scripts.make_inference_dataset \\
+        -i {unlabeled_bam} \\
         -n {n_reads} \\
         -c {context} \\
         -o {out_file}
@@ -122,9 +122,10 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_artif
         --num-workers {num_workers}
         """
     else: 
+        # this is for testing only
         options = {'cores': num_workers, 
-                'memory': '128gb', 
-                'walltime': '01:00:00'
+                'memory': '64gb', 
+                'walltime': '00:30:00'
                 }
         spec  = f"""
         source $(conda info --base)/etc/profile.d/conda.sh
@@ -141,29 +142,46 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_artif
         """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
-def infer(artifact_path, data_path, stats_path, output_path, num_workers, row_groups):
+def infer(artifact_path, data_path, stats_path, output_path, num_workers, row_groups, gpu=True):
     inputs = {'artifact': artifact_path,
               'data_path': data_path,
               'stats_path': stats_path
               }
     outputs = {'inference_out': output_path}
-    options = {'cores': num_workers, 
-                'memory': '128gb', 
-                'walltime': '0:30:00',
-                'gres': 'gpu:1',
-                'account': f'{CONFIG['gdk_account']} --partition=gpu'}
-    spec  = f"""
-    source $(conda info --base)/etc/profile.d/conda.sh
-    conda activate methyl-dev
-    cd {p('')}
-    python -m src.infer \\
-    --artifact-path {artifact_path}\\
-    --data-path {data_path} \\
-    --stats-path {stats_path} \\
-    --output-path {output_path} \\
-    --num-workers {num_workers} \\
-    --restrict-row-groups {row_groups}
-    """
+    if gpu:
+        options = {'cores': num_workers, 
+                    'memory': '128gb', 
+                    'walltime': '0:30:00',
+                    'gres': 'gpu:1',
+                    'account': f'{CONFIG['gdk_account']} --partition=gpu'}
+        spec  = f"""
+        source $(conda info --base)/etc/profile.d/conda.sh
+        conda activate methyl-dev
+        cd {p('')}
+        python -m src.infer \\
+        --artifact-path {artifact_path}\\
+        --data-path {data_path} \\
+        --stats-path {stats_path} \\
+        --output-path {output_path} \\
+        --num-workers {num_workers} \\
+        --restrict-row-groups {row_groups}
+        """
+    else:
+        options = {'cores': num_workers, 
+                    'memory': '128gb', 
+                    'walltime': '0:30:00'}
+        spec  = f"""
+        source $(conda info --base)/etc/profile.d/conda.sh
+        conda activate methyl-dev
+        cd {p('')}
+        python -m src.infer \\
+        --artifact-path {artifact_path}\\
+        --data-path {data_path} \\
+        --stats-path {stats_path} \\
+        --output-path {output_path} \\
+        --num-workers {num_workers} \\
+        --restrict-row-groups {row_groups}
+        """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
 ### ---------- WORKFLOW GRAPH ------------
@@ -187,7 +205,7 @@ martin_data_target = gwf.target_from_template(
     template = create_inference_dataset(
         unlabeled_bam=CONFIG['martin_bam_path'],
         out_file=CONFIG['martin_ds_path'],
-        n_reads=10,
+        n_reads=100_000,
         context=CONFIG['context']
     )
 )
@@ -201,8 +219,8 @@ stats_target = gwf.target_from_template(
 )
 
 ### TRAINING 
-train_target = gwf.target_from_template(
-    name='train',
+train_target_ss_v01 = gwf.target_from_template(
+    name='train_ss_v01',
     template=train(
         config_path=CONFIG['config_path'],
         train_data_path=train_data_target.outputs['train_ds'],
@@ -214,23 +232,39 @@ train_target = gwf.target_from_template(
     )
 )
 
+train_target_cpu_test = gwf.target_from_template(
+    name='train_cpu',
+    template=train(
+        config_path=CONFIG['config_path'],
+        train_data_path=train_data_target.outputs['train_ds'],
+        test_data_path=train_data_target.outputs['test_ds'],
+        stats_path=stats_target.outputs['stats_file'],
+        output_artifact_path=CONFIG['output_artifact_path_cpu'],
+        output_log_path=CONFIG['output_log_path_cpu'],
+        num_workers=CONFIG['num_workers'],
+        gpu=False
+    )
+)
+
 ### INFERENCE
 hello_world_infer_target = gwf.target_from_template(
-    name = 'hellow_world_infer',
-    template = infer(artifact_path=train_target.outputs['artifact'], 
+    name = 'hello_world_infer',
+    template = infer(artifact_path=train_target_cpu_test.outputs['artifact'], 
                      data_path=train_data_target.outputs['test_ds'], 
                      stats_path=stats_target.outputs['stats_file'], 
                      output_path='results/hello_world_inference.parquet', 
                      num_workers=CONFIG['num_workers'], 
-                     row_groups=1)
+                     row_groups=1,
+                     gpu=False)
 )
 
 martin_inference_target = gwf.target_from_template(
     name = 'martin_inference',
-    template = infer(artifact_path=train_target.outputs['artifact'], 
+    template = infer(artifact_path=train_target_ss_v01.outputs['artifact'], 
                      data_path=martin_data_target.outputs['out_parquet'], 
                      stats_path=stats_target.outputs['stats_file'], 
                      output_path=CONFIG['martin_inference_output_path'], 
-                     num_workers=CONFIG['num_workers'], 
-                     row_groups=1)
+                     num_workers=CONFIG['num_workers'],
+                     row_groups=0
+                     )
 )
