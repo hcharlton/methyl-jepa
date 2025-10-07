@@ -1,6 +1,6 @@
 import polars as pl
 import altair as alt
-from src.paths import RESULTS_DIR, INFERENCE_DATA_DIR
+from methyl_jepa.paths import RESULTS_DIR, INFERENCE_DATA_DIR
 
 alt.data_transformers.enable("vegafusion")
 

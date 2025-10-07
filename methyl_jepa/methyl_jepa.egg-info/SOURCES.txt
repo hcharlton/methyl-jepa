@@ -1,0 +1,5 @@
+pyproject.toml
+methyl_jepa/methyl_jepa.egg-info/PKG-INFO
+methyl_jepa/methyl_jepa.egg-info/SOURCES.txt
+methyl_jepa/methyl_jepa.egg-info/dependency_links.txt
+methyl_jepa/methyl_jepa.egg-info/top_level.txt
