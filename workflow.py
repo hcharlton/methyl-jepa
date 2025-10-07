@@ -105,7 +105,7 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_artif
     if gpu: 
         options = {'cores': num_workers, 
                 'memory': '128gb', 
-                'walltime': '02:00:00',
+                'walltime': '08:00:00',
                 'gres': 'gpu:1',
                 'account': f'{CONFIG['gdk_account']} --partition=gpu'}
         spec  = f"""
@@ -205,7 +205,7 @@ martin_data_target = gwf.target_from_template(
     template = create_inference_dataset(
         unlabeled_bam=CONFIG['martin_bam_path'],
         out_file=CONFIG['martin_ds_path'],
-        n_reads=100_000,
+        n_reads=1_000_000,
         context=CONFIG['context']
     )
 )
@@ -267,4 +267,15 @@ martin_inference_target = gwf.target_from_template(
                      num_workers=CONFIG['num_workers'],
                      row_groups=0
                      )
+)
+
+testset_inference_target = gwf.target_from_template(
+    name = 'testset_inference',
+    template = infer(artifact_path=train_target_ss_v01.outputs['artifact'], 
+                     data_path=train_data_target.outputs['test_ds'], 
+                     stats_path=stats_target.outputs['stats_file'], 
+                     output_path='results/testset_inference.parquet', 
+                     num_workers=CONFIG['num_workers'], 
+                     row_groups=0,
+                     gpu=True)
 )

@@ -3,9 +3,12 @@ import altair as alt
 
 
 
-data_path='../../../output/v0.4.7-train_df.parquet'
+data_path='../../../../results/testset_inference.parquet'
 
-output_path='v4.7_strandProbDiffDist.svg'
+output_path='ss_v01_testset_strandProbDiffDist.svg'
+
+LOW_DROP = 0.25
+HIGH_DROP = 0.75
 
 q = (
     pl.scan_parquet(data_path)
@@ -17,7 +20,7 @@ df = (
     q.collect()
     .pivot(
     on="strand",          
-    index=["id", 'label'],         
+    index=["id"],         
     values="prob",        
     aggregate_function="first", 
     )
@@ -31,7 +34,6 @@ print(df.head())
 chart = alt.Chart(df).mark_bar().encode(
     alt.X('deltap').bin(maxbins=200).title('P(fwd) - P(rev)'),
     alt.Y('count()'),
-    alt.Color('label:N')
 ).properties(
     width=600,
     height=600,
