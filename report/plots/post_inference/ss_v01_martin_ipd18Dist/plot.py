@@ -8,7 +8,6 @@ alt.data_transformers.enable("vegafusion")
 q_x = (
     pl.scan_parquet(RESULTS_DIR/'martin_inference.parquet')
     .head(100_000_000)
-    # .head(100_000)
     .with_columns((pl.col('read_name')+pl.col('pos').cast(pl.String)).alias('site_id'))
     .select(['site_id','strand', 'prob'])
     # .unpivot(index = 'siteid')
@@ -17,25 +16,24 @@ q_x = (
 q_join = (
     pl.scan_parquet(INFERENCE_DATA_DIR/'martin.parquet')
     .head(100_000_000)
-    # .head(100_000)
     .with_columns((pl.col('read_name')+pl.col('cg_pos').cast(pl.String)).alias('site_id'))
     .join(other=q_x, on='site_id', how='inner')
     .with_columns((pl.col('fi').list[18]).alias('fi_18'))
+    .select(['prob', 'fi_18', 'strand'])
+    .filter(pl.col('strand')=='fwd')
     # .with_columns((pl.col('fi').list[14]).alias('fi_14'))
     # .with_columns((pl.col('ri').list[18]).alias('ri_18'))
     # .with_columns((pl.col('ri').list[14]).alias('ri_14'))
-    .select(['prob','fi_18', 'strand'])
-    .filter(pl.col('strand')=='fwd')
     )
 
-df_join = q_join.collect()
-print(df_join.head())
+df_join = q_join.collect().sample(n=2_000_000, seed=0)
+print(len(df_join))
 
-chart = alt.Chart(df_join).mark_boxplot().encode(
-    alt.X("fi_18:Q", bin=alt.Bin(maxbins=50)),
-    alt.Y("prob:Q").scale(zero=True),
+chart = alt.Chart(df_join).mark_bar().encode(
+    alt.X("fi_18:Q"),
+    alt.Y("count():Q"),
 ).properties(
     height=500,
-    width=800
+    width=500
 )
-chart.save(pathlib.Path(__file__).with_name("ss_v01_martin_ipdProb.svg"))
+chart.save(pathlib.Path(__file__).with_name("ss_v01_martin_ipd18Dist.svg"))

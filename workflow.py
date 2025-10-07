@@ -6,7 +6,7 @@ from gwf import AnonymousTarget
 CONFIG = {
     'project_root': '/home/chcharlton/mutationalscanning/Workspaces/chcharlton/methyl-jepa',
     'gdk_account': 'mutationalscanning',
-    'config_path': 'src/config.yaml',
+    'config_path': 'methyl_jepa/config.yaml',
 
     # ---Labeled Data (Training) ---
     'pos_bam_path': "data/00_raw/labeled/methylated_hifi_reads.bam",
@@ -19,8 +19,12 @@ CONFIG = {
     'context': 32,
 
     # --- Unlabeled Data (Inference) ---
+    # martin
     'martin_bam_path': 'data/00_raw/unlabeled/martin_kinetics_diploid.bam',
     'martin_ds_path': 'data/01_processed/inference_sets/martin.parquet',
+    # da1
+    'da1_bam_path': 'data/00_raw/unlabeled/da1_kinetics_diploid.bam',
+    'da1_ds_path': 'data/01_processed/inference_sets/da1.parquet',
 
     # --- Model & Training ---
     'output_artifact_path': 'models/v_1_model_artifact.pt',
@@ -31,7 +35,8 @@ CONFIG = {
 
     # --- Inference ---
     'hello_world_inference_output_path': 'results/hello_world_inference.parquet',
-    'martin_inference_output_path': 'results/martin_inference.parquet'
+    'martin_inference_output_path': 'results/martin_inference.parquet',
+    'da1_inference_output_path': 'results/da1_inference.parquet'
     }
 
 # resolve paths helper
@@ -112,7 +117,7 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_artif
         source $(conda info --base)/etc/profile.d/conda.sh
         conda activate methyl-dev
         cd {p('')}
-        python -m src.train \\
+        python -m methl_jepa.train \\
         --config-path  {config_path} \\
         --train-data-path {train_data_path} \\
         --test-data-path {test_data_path} \\
@@ -131,7 +136,7 @@ def train(config_path, train_data_path, test_data_path, stats_path, output_artif
         source $(conda info --base)/etc/profile.d/conda.sh
         conda activate methyl-dev
         cd {p('')}
-        python -m src.train \\
+        python -m methyl_jepa.train \\
         --config-path  {config_path} \\
         --train-data-path {train_data_path} \\
         --test-data-path {test_data_path} \\
@@ -158,7 +163,7 @@ def infer(artifact_path, data_path, stats_path, output_path, num_workers, row_gr
         source $(conda info --base)/etc/profile.d/conda.sh
         conda activate methyl-dev
         cd {p('')}
-        python -m src.infer \\
+        python -m methyl_jepa.infer \\
         --artifact-path {artifact_path}\\
         --data-path {data_path} \\
         --stats-path {stats_path} \\
@@ -174,7 +179,7 @@ def infer(artifact_path, data_path, stats_path, output_path, num_workers, row_gr
         source $(conda info --base)/etc/profile.d/conda.sh
         conda activate methyl-dev
         cd {p('')}
-        python -m src.infer \\
+        python -m methyl_jepa.infer \\
         --artifact-path {artifact_path}\\
         --data-path {data_path} \\
         --stats-path {stats_path} \\
@@ -186,7 +191,9 @@ def infer(artifact_path, data_path, stats_path, output_path, num_workers, row_gr
 
 ### ---------- WORKFLOW GRAPH ------------
 
-### DATA
+### DATA ####
+
+# datasets
 train_data_target = gwf.target_from_template(
     name='create_labeled_datasets',
     template=create_train_test_datasets(
@@ -210,6 +217,16 @@ martin_data_target = gwf.target_from_template(
     )
 )
 
+da1_data_target = gwf.target_from_template(
+    name='create_da1_dataset',
+    template=create_inference_dataset(
+        unlabeled_bam=CONFIG['da1_bam_path'],
+        out_file=CONFIG['da1_ds_path'],
+        n_reads=1_000_000,
+        context=CONFIG['context']
+    )
+)
+# norm stats
 stats_target = gwf.target_from_template(
     name='compute_stats',
     template=compute_norm_stats(
@@ -218,7 +235,7 @@ stats_target = gwf.target_from_template(
     )
 )
 
-### TRAINING 
+### TRAINING ###
 train_target_ss_v01 = gwf.target_from_template(
     name='train_ss_v01',
     template=train(
@@ -232,31 +249,31 @@ train_target_ss_v01 = gwf.target_from_template(
     )
 )
 
-train_target_cpu_test = gwf.target_from_template(
-    name='train_cpu',
-    template=train(
-        config_path=CONFIG['config_path'],
-        train_data_path=train_data_target.outputs['train_ds'],
-        test_data_path=train_data_target.outputs['test_ds'],
-        stats_path=stats_target.outputs['stats_file'],
-        output_artifact_path=CONFIG['output_artifact_path_cpu'],
-        output_log_path=CONFIG['output_log_path_cpu'],
-        num_workers=CONFIG['num_workers'],
-        gpu=False
-    )
-)
-
-### INFERENCE
-hello_world_infer_target = gwf.target_from_template(
-    name = 'hello_world_infer',
-    template = infer(artifact_path=train_target_cpu_test.outputs['artifact'], 
-                     data_path=train_data_target.outputs['test_ds'], 
-                     stats_path=stats_target.outputs['stats_file'], 
-                     output_path='results/hello_world_inference.parquet', 
-                     num_workers=CONFIG['num_workers'], 
-                     row_groups=1,
-                     gpu=False)
-)
+# train_target_cpu_test = gwf.target_from_template(
+#     name='train_cpu',
+#     template=train(
+#         config_path=CONFIG['config_path'],
+#         train_data_path=train_data_target.outputs['train_ds'],
+#         test_data_path=train_data_target.outputs['test_ds'],
+#         stats_path=stats_target.outputs['stats_file'],
+#         output_artifact_path=CONFIG['output_artifact_path_cpu'],
+#         output_log_path=CONFIG['output_log_path_cpu'],
+#         num_workers=CONFIG['num_workers'],
+#         gpu=False
+#     )
+# )
+ 
+### INFERENCE ####
+# hello_world_infer_target = gwf.target_from_template(
+#     name = 'hello_world_infer',
+#     template = infer(artifact_path=train_target_cpu_test.outputs['artifact'], 
+#                      data_path=train_data_target.outputs['test_ds'], 
+#                      stats_path=stats_target.outputs['stats_file'], 
+#                      output_path='results/hello_world_inference.parquet', 
+#                      num_workers=CONFIG['num_workers'], 
+#                      row_groups=1,
+#                      gpu=False)
+# )
 
 martin_inference_target = gwf.target_from_template(
     name = 'martin_inference',
@@ -278,4 +295,15 @@ testset_inference_target = gwf.target_from_template(
                      num_workers=CONFIG['num_workers'], 
                      row_groups=0,
                      gpu=True)
+)
+
+da1_inference_target = gwf.target_from_template(
+    name = 'da1_inference',
+    template = infer(artifact_path=train_target_ss_v01.outputs['artifact'], 
+                     data_path=da1_data_target.outputs['out_parquet'], 
+                     stats_path=stats_target.outputs['stats_file'], 
+                     output_path=CONFIG['da1_inference_output_path'], 
+                     num_workers=CONFIG['num_workers'],
+                     row_groups=0
+                     )
 )

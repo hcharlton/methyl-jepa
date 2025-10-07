@@ -33,9 +33,8 @@ import os
 # this also has the effect of preserving the seq->kinetics causal structure
 # info here https://pacbiofileformats.readthedocs.io/en/13.1/BAM.html
 
-def bam_to_df(bam_path: str, n_reads: int, context: int, singletons: bool):
+def bam_to_df(bam_path: str, n_reads: int, context: int, singletons: bool, required_tags = {"fi", "ri", "fp", "rp", "np", "sm", "sx"}):
     # tags in the BAM file that we need to pull out each sample
-    required_tags = {"fi", "ri", "fp", "rp", "np", "sm", "sx"}
     col_data = {
         "read_name": [], 
         "seq": [], 
