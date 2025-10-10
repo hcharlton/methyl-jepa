@@ -4,19 +4,18 @@ import re
 import argparse
 import sys
 import os
+from array import array
 
 ### Purpose ###
 # converts a BAM file into a parquet file of CpG instances. 
 
-
-#### example usage ####
+### example usage ###
 ## short format
 # python make_inference_dataset.py -n 1000 -c 32 -o output_file_name_str -r
 ## long format
 # python make_inference_dataset.py --output-name output_file_name_str --context 32 --n_reads 1000 --restrict-instances
 
-
-# Note for the reverse strand indexing: 
+### Note for the reverse strand indexing ###
 # The reverse strand is stored in the opposite direction of the 
 # forward strand. So it is from the last base to the first. 
 #
@@ -33,129 +32,168 @@ import os
 # this also has the effect of preserving the seq->kinetics causal structure
 # info here https://pacbiofileformats.readthedocs.io/en/13.1/BAM.html
 
-def bam_to_df(bam_path: str, n_reads: int, context: int, singletons: bool, required_tags = {"fi", "ri", "fp", "rp", "np", "sm", "sx"}):
-    # tags in the BAM file that we need to pull out each sample
-    col_data = {
-        "read_name": [], 
-        "seq": [], 
-        "qual": [],
-        "cg_pos": [],
-        "np": [],
-        "sm": [],
-        "sx": [],
-        "fi": [], 
-        "fp": [], 
-        "ri": [], 
-        "rp": []
-        }
-    
-    # in other words, how far on each side of the CG should we gather context?
-    # for context=32, this is 15 so that the total sample is 32 units long
+REQUIRED_TAGS = {"fi", "ri", "fp", "rp",}
+
+DTYPE_MAP = {
+    "read_name": pl.String,
+    "cg_pos": pl.UInt16,
+    "seq": pl.String,
+    "qual": pl.List(pl.UInt8),
+    "np": pl.UInt8,
+    "sm": pl.List(pl.UInt8),
+    "sx": pl.List(pl.UInt8),
+    "fi": pl.List(pl.UInt8),
+    "fp": pl.List(pl.UInt8),
+    "ri": pl.List(pl.UInt8),
+    "rp": pl.List(pl.UInt8),
+}
+# optional tags {"np", "sm", "sx"}
+
+def _process_read(read, all_tags, required_tags):
+    """
+    Processes a single pysam.AlignmentRead.
+    Checks for required tags and extracts all full-length tag data.
+    Returns:
+        A dictionary with full-length data ('seq', 'qual', 'tag_data'),
+        or None if the read is invalid (missing/inconsistent tags).
+    """
+    # check required tags existence
+    if not all(read.has_tag(tag) for tag in required_tags):
+        return None
+    read_tag_data = {}
+
+    # iterate through all tags
+    for tag in all_tags:
+        value = read.get_tag(tag) if read.has_tag(tag) else None
+        if isinstance(value, array):
+            value = value.tolist()
+        read_tag_data[tag] = value
+
+    # check validity of tag values
+    if any(read_tag_data[tag] is None or len(read_tag_data[tag]) == 0 for tag in required_tags):
+        return None
+    # return the dict (the same keys regardless of optional tags)
+    return {
+        "name": read.query_name,
+        "seq": read.query_sequence,
+        "qual": list(read.query_qualities),
+        "tag_data": read_tag_data
+    }
+
+def _extract_cpg_windows(processed_read, context, singletons, per_base_tags):
+    """
+    A generator that finds and yields all valid CpG windows from a processed read.
+    """
+    seq = processed_read["seq"]
+    qual_values = processed_read["qual"]
+    read_tag_data = processed_read["tag_data"]
     flank_size = (context - 2) // 2
 
+    # Find all non-overlapping "CG" sites in the sequence
+    for match in re.finditer("CG", seq):
+        L = len(read_tag_data["fi"])
+        cg_pos = match.start()
+        win_start = cg_pos - flank_size
+        win_end = cg_pos + 2 + flank_size
+        rev_win_start = L - win_end
+        rev_win_end = L - win_start
 
+        # Check for out-of-bounds windows early
+        if not all([win_start >= 0, win_end <= L, rev_win_end >= 0, rev_win_start <= L]):
+            continue
+
+        context_seq = seq[win_start:win_end]
+        if singletons and context_seq.count("CG") != 1:
+            continue
+        
+        context_qual = qual_values[win_start:win_end]
+
+        # --- Slicing Logic ---
+        site_data_to_append = {}
+        for tag, values in read_tag_data.items():
+            if values is None:
+                site_data_to_append[tag] = None
+                continue
+            if tag in per_base_tags:
+                site_data_to_append[tag] = values[rev_win_start:rev_win_end] if tag in {"ri", "rp"} else values[win_start:win_end]
+            else:
+                site_data_to_append[tag] = values
+
+        # --- Length Check ---
+        context_lengths = {len(v) for k, v in site_data_to_append.items() if k in per_base_tags and v is not None}
+        context_lengths.add(len(context_seq))
+        context_lengths.add(len(context_qual))
+        if len(context_lengths) > 1 or (context not in context_lengths and len(context_lengths) > 0):
+            continue
+
+        # --- Yield a valid window ---
+        # This dictionary represents one row in the final DataFrame
+        yield {
+            "read_name": processed_read["name"],
+            "cg_pos": cg_pos,
+            "seq": context_seq,
+            "qual": context_qual,
+            **site_data_to_append,
+        }
+        # final_window = {
+        #     "read_name": processed_read["name"],
+        #     "cg_pos": cg_pos,
+        #     "seq": context_seq,
+        #     "qual": context_qual,
+        # }
+        # final_window.update(site_data_to_append)
+        # yield final_window
+
+def bam_to_df(bam_path: str, n_reads: int, context: int, singletons: bool, optional_tags: list):
+    PER_BASE_TAGS = {"fi", "ri", "fp", "rp", "sm", "sx"}
+    required_tags = REQUIRED_TAGS
+    optional_tags_set = set(optional_tags)
+    all_tags = required_tags.union(optional_tags_set)
+    print(all_tags)
+
+    # Initialize the final data accumulator
+    all_windows = []
+    
     counters = {
         "reads_processed": 0,
-        "reads_missing_tags": 0,
-        "reads_with_empty_tags": 0,
-        "cpg_sites_found": 0,
-        "cpg_filtered_out_by_window": 0,
-        "cpg_appended": 0
-        }
-
+        "reads_skipped": 0,
+        "cpg_windows_found": 0
+    }
 
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         for i, read in enumerate(bam):
-            if i >= n_reads and n_reads !=0:
+            if i >= n_reads and n_reads != 0:
                 break
-            counters["reads_processed"] += 1 # counter append
-            if not all(read.has_tag(tag) for tag in required_tags):
-                counters["reads_missing_tags"] += 1 # counter append
+            
+            # --- 1. Process the Read ---
+            processed_read = _process_read(read, all_tags, required_tags)
+            
+            if processed_read is None:
+                counters["reads_skipped"] += 1
                 continue
-            seq = read.query_sequence
-            # meta values
-            np_value = read.get_tag('np')
-            sm_values = read.get_tag('sm')
-            sx_values = read.get_tag('sx')
-            qual_values = list(read.query_qualities)
-            # forward values
-            fi_values = read.get_tag("fi")
-            fp_values = read.get_tag("fp")
-            # reverse values
-            ri_values = read.get_tag("ri")
-            rp_values = read.get_tag("rp")
-            # check that none of the 
-            if any([len(fi_values)==0,
-                    len(fp_values)==0,
-                    len(ri_values)==0,
-                    len(rp_values)==0,
-                    len(sm_values)==0,
-                    len(sx_values)==0,
-                    len(qual_values)==0]):
-                   counters["reads_with_empty_tags"] += 1 # counter append
-                   continue
-            # Find all non-overlapping "CG" sites in the sequence
-            for match in re.finditer("CG", seq):
-                counters["cpg_sites_found"] += 1 # counter append
-                L = len(fi_values)
-                cg_pos = match.start()
-                win_start = cg_pos - flank_size
-                win_end = cg_pos + 2 + flank_size
-                # perform reverse strand indexing calculation
-                rev_win_start = L - win_end
-                rev_win_end = L - win_start
-                context_seq = seq[win_start:win_end]
-                context_qual = qual_values[win_start:win_end]
-                # logic for only including one CG per sample (singleton)
-                if (singletons == True) and (context_seq.count("CG") != 1):
-                    continue
-                context_fi = fi_values[win_start:win_end]
-                context_fp = fp_values[win_start:win_end]
-                context_ri = ri_values[rev_win_start:rev_win_end]
-                context_rp = rp_values[rev_win_start:rev_win_end]
-                # these do not have funny indexing since they are not strand specific
-                context_sm = sm_values[win_start:win_end]
-                context_sx = sx_values[win_start:win_end]
+            
+            # --- 2. Extract CpG Windows from the processed read ---
+            for window_data in _extract_cpg_windows(processed_read, context, singletons, PER_BASE_TAGS):
+                all_windows.append(window_data)
+                counters["cpg_windows_found"] += 1
 
-                # make sure they all have the same length
-                if set(map(len, [context_seq, context_qual, context_fi, context_fp, context_ri, context_rp, context_sm, context_sx])) != {context}:
-                    counters["cpg_filtered_out_by_window"] += 1 # counter append
-                    continue
-                # Ensure the window is fully contained within the read
-                if all([win_start >= 0, win_end <= L, rev_win_end >=0, rev_win_start <= L]):
-                    counters["cpg_appended"] += 1 # counter append
-                    col_data["read_name"].append(read.query_name)
-                    col_data["cg_pos"].append(cg_pos)
-                    col_data["seq"].append(context_seq)
-                    col_data['qual'].append(context_qual)
-                    col_data["fi"].append(context_fi)
-                    col_data["fp"].append(context_fp)
-                    col_data["ri"].append(context_ri)
-                    col_data["rp"].append(context_rp)
-                    col_data["np"].append(np_value)
-                    col_data["sm"].append(context_sm)
-                    col_data["sx"].append(context_sx)
-    # use List(UInt16) for memory saving since polars defaults to UInt64
+            counters["reads_processed"] += 1
 
     print("--- Debugging Counters ---")
     for key, value in counters.items():
         print(f"{key:<25}: {value}")
     print("--------------------------")
-    df = pl.DataFrame({
-        "read_name": pl.Series(col_data["read_name"], dtype = pl.String),
-        "cg_pos": pl.Series(col_data["cg_pos"], dtype = pl.UInt16),
-        "seq": pl.Series(col_data["seq"], dtype = pl.String),
-        "qual": pl.Series(col_data['qual'], dtype = pl.List(pl.UInt8)),
-        "np": pl.Series(col_data["np"], dtype = pl.UInt8),
-        "sm": pl.Series(col_data["sm"], dtype = pl.List(pl.UInt8)),
-        "sx": pl.Series(col_data["sx"], dtype = pl.List(pl.UInt8)),
-        "fi": pl.Series(col_data["fi"], dtype = pl.List(pl.UInt16)),
-        "fp": pl.Series(col_data["fp"], dtype = pl.List(pl.UInt16)),
-        "ri": pl.Series(col_data["ri"], dtype = pl.List(pl.UInt16)),
-        "rp": pl.Series(col_data["rp"], dtype = pl.List(pl.UInt16)),
-    })
 
+    if not all_windows:
+        print("Warning: No valid CpG windows were found. Returning an empty DataFrame.")
+        return pl.DataFrame()
+    
+    first_window_cols = all_windows[0].keys()
+    schema = {col: DTYPE_MAP[col] for col in first_window_cols if col in DTYPE_MAP}
+    print(all_windows[0])
+    df = pl.from_dicts(all_windows, schema=schema)
     return df
+
 
 
 def main():
@@ -176,6 +214,11 @@ def main():
                         type=int,
                         required=True,
                         help='How many base pairs to extract for each sample, including the CG pair.')
+    parser.add_argument('-t', '--optional_tags',
+                        type=str,
+                        nargs='*', 
+                        default=[],
+                        help='Space-separated list of optional tags to extract (e.g., np sm sx).')
     parser.add_argument('-o', '--output_path',
                         type=str,
                         required=True,
@@ -191,9 +234,8 @@ def main():
     df = bam_to_df(bam_path=os.path.expanduser(args.input_path), 
                             n_reads=args.n_reads, 
                             context=args.context, 
-                            singletons=args.singletons)
-
-
+                            singletons=args.singletons,
+                            optional_tags=args.optional_tags)
 
     df.write_parquet(args.output_path)
 

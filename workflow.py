@@ -22,9 +22,11 @@ CONFIG = {
     # martin
     'martin_bam_path': 'data/00_raw/unlabeled/martin_kinetics_diploid.bam',
     'martin_ds_path': 'data/01_processed/inference_sets/martin.parquet',
+    'martin_optional_tags': ['np', 'sm', 'sx'],
     # da1
     'da1_bam_path': 'data/00_raw/unlabeled/da1_kinetics_diploid.bam',
     'da1_ds_path': 'data/01_processed/inference_sets/da1.parquet',
+    'da1_optional_tags': ['np'],
 
     # --- Model & Training ---
     'output_artifact_path': 'models/v_1_model_artifact.pt',
@@ -46,7 +48,7 @@ def p(path):
 # SLURM backend gwf worker
 gwf = Workflow(defaults={'account': CONFIG['gdk_account']})
 
-def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, context, train_prop):
+def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, context, train_prop, n_reads=600_000):
     """Creates train and test datasets"""
     inputs = {'pos_bam': pos_bam, 'neg_bam': neg_bam}
     outputs = {'train_ds': train_out, 'test_ds': test_out}
@@ -60,15 +62,18 @@ def create_train_test_datasets(pos_bam, neg_bam, train_out, test_out, n_reads, c
         --neg-bam {neg_bam} \\
         --train-output {train_out} \\
         --test-output {test_out} \\
-        --n-reads {600_000} \\
+        --n-reads {n_reads} \\
         --context {context} \\
         --train-prop {train_prop}
         """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
-def create_inference_dataset(unlabeled_bam, out_file, n_reads, context):
+def create_inference_dataset(unlabeled_bam, out_file, n_reads, context, optional_tags):
     inputs = {'in_bam': unlabeled_bam}
     outputs = {'out_parquet': out_file}
+
+    tags_str = ' '.join(optional_tags)
+
     options = {'cores': 32, 'memory': '512gb', 'walltime': '03:00:00'}
     spec = f"""
     source $(conda info --base)/etc/profile.d/conda.sh
@@ -78,7 +83,8 @@ def create_inference_dataset(unlabeled_bam, out_file, n_reads, context):
         -i {unlabeled_bam} \\
         -n {n_reads} \\
         -c {context} \\
-        -o {out_file}
+        -o {out_file} \\
+        -t {tags_str}
     """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
@@ -213,7 +219,8 @@ martin_data_target = gwf.target_from_template(
         unlabeled_bam=CONFIG['martin_bam_path'],
         out_file=CONFIG['martin_ds_path'],
         n_reads=1_000_000,
-        context=CONFIG['context']
+        context=CONFIG['context'],
+        optional_tags=CONFIG['martin_optional_tags']
     )
 )
 
@@ -223,7 +230,8 @@ da1_data_target = gwf.target_from_template(
         unlabeled_bam=CONFIG['da1_bam_path'],
         out_file=CONFIG['da1_ds_path'],
         n_reads=1_000_000,
-        context=CONFIG['context']
+        context=CONFIG['context'],
+        optional_tags=CONFIG['da1_optional_tags']
     )
 )
 # norm stats
