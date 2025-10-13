@@ -29,8 +29,8 @@ from torch import nn
 from tqdm import tqdm
 from enum import Enum
 
-from src.dataset import MethylIterableDataset
-from src.model import MethylCNNv2, FeatureSet, MODEL_REGISTRY
+from methyl_jepa.dataset import MethylIterableDataset
+from methyl_jepa.model import MethylCNNv2, FeatureSet, MODEL_REGISTRY
 
 # --- Configuration ---
 # printing long strings config

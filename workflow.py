@@ -27,6 +27,12 @@ CONFIG = {
     'da1_bam_path': 'data/00_raw/unlabeled/da1_kinetics_diploid.bam',
     'da1_ds_path': 'data/01_processed/inference_sets/da1.parquet',
     'da1_optional_tags': ['np'],
+    # positive_data_target, negative_data_target
+    'positive_ds_path' : 'data/01_processed/inference_sets/positive.parquet',
+    'negative_ds_path' : 'data/01_processed/inference_sets/negative.parquet',
+    'posneg_optional_tags': ['np', 'sm', 'sx'],
+    # testset_inference_dataset_target
+    'testset_inference_ds_path': 'data/01_processed/inference_sets/testset_inference_dataset.parquet',
 
     # --- Model & Training ---
     'output_artifact_path': 'models/v_1_model_artifact.pt',
@@ -85,6 +91,24 @@ def create_inference_dataset(unlabeled_bam, out_file, n_reads, context, optional
         -c {context} \\
         -o {out_file} \\
         -t {tags_str}
+    """
+    return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
+
+def create_testset_inference_dataset(pos_ds, neg_ds, test_ds, out_ds):
+    inputs = {'positive_dataset': pos_ds, 
+              'negative_dataset': neg_ds, 
+              'test_dataset': test_ds}
+    outputs = {'output_dataset': out_ds}
+    options = {'cores': 16, 'memory': '256gb', 'walltime': '01:00:00'}
+    spec = f"""
+    source $(conda info --base)/etc/profile.d/conda.sh
+    conda activate methyl-jepa
+    cd {p('')}
+    python -m scripts.make_testset_inference_dataset \\
+        -p {pos_ds} \\
+        -n {neg_ds} \\
+        -t {test_ds} \\
+        -o {out_ds}
     """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
@@ -162,7 +186,7 @@ def infer(artifact_path, data_path, stats_path, output_path, num_workers, row_gr
     if gpu:
         options = {'cores': num_workers, 
                     'memory': '128gb', 
-                    'walltime': '0:30:00',
+                    'walltime': '1:00:00',
                     'gres': 'gpu:1',
                     'account': f'{CONFIG['gdk_account']} --partition=gpu'}
         spec  = f"""
@@ -213,9 +237,41 @@ train_data_target = gwf.target_from_template(
     )
 )
 
-martin_data_target = gwf.target_from_template(
-    name = 'create_martin_dataset',
-    template = create_inference_dataset(
+positive_data_target = gwf.target_from_template(
+    name='create_positive_dataset',
+    template=create_inference_dataset(
+        unlabeled_bam=CONFIG['pos_bam_path'],
+        out_file=CONFIG['positive_ds_path'],
+        n_reads=0,
+        context=CONFIG['context'],
+        optional_tags=CONFIG['posneg_optional_tags']
+    )
+)
+
+negative_data_target = gwf.target_from_template(
+    name='create_negative_dataset',
+    template=create_inference_dataset(
+        unlabeled_bam=CONFIG['neg_bam_path'],
+        out_file=CONFIG['negative_ds_path'],
+        n_reads=0,
+        context=CONFIG['context'],
+        optional_tags=CONFIG['posneg_optional_tags']
+    )
+)
+
+testset_inference_data_target = gwf.target_from_template(
+    name='create_testset_inference_dataset',
+    template=create_testset_inference_dataset(
+        pos_ds=positive_data_target.outputs['out_parquet'], 
+        neg_ds=negative_data_target.outputs['out_parquet'], 
+        test_ds=train_data_target.outputs['test_ds'], 
+        out_ds=CONFIG['testset_inference_ds_path']
+        )
+)
+
+martin_data_target=gwf.target_from_template(
+    name='create_martin_dataset',
+    template=create_inference_dataset(
         unlabeled_bam=CONFIG['martin_bam_path'],
         out_file=CONFIG['martin_ds_path'],
         n_reads=1_000_000,
@@ -300,6 +356,17 @@ testset_inference_target = gwf.target_from_template(
                      data_path=train_data_target.outputs['test_ds'], 
                      stats_path=stats_target.outputs['stats_file'], 
                      output_path='results/testset_inference.parquet', 
+                     num_workers=CONFIG['num_workers'], 
+                     row_groups=0,
+                     gpu=True)
+)
+
+testset_inference_debug_target = gwf.target_from_template(
+    name = 'testset_inference_debug',
+    template = infer(artifact_path=train_target_ss_v01.outputs['artifact'], 
+                     data_path=testset_inference_data_target.outputs['output_dataset'], 
+                     stats_path=stats_target.outputs['stats_file'], 
+                     output_path='results/testset_inference_debug.parquet', 
                      num_workers=CONFIG['num_workers'], 
                      row_groups=0,
                      gpu=True)

@@ -65,8 +65,8 @@ def _process_read(read, all_tags, required_tags):
     # iterate through all tags
     for tag in all_tags:
         value = read.get_tag(tag) if read.has_tag(tag) else None
-        if isinstance(value, array):
-            value = value.tolist()
+        # if isinstance(value, array):
+        #     value = value.tolist()
         read_tag_data[tag] = value
 
     # check validity of tag values
@@ -80,103 +80,71 @@ def _process_read(read, all_tags, required_tags):
         "tag_data": read_tag_data
     }
 
-def _extract_cpg_windows(processed_read, context, singletons, per_base_tags):
-    """
-    A generator that finds and yields all valid CpG windows from a processed read.
-    """
-    seq = processed_read["seq"]
-    qual_values = processed_read["qual"]
-    read_tag_data = processed_read["tag_data"]
-    flank_size = (context - 2) // 2
-
-    # Find all non-overlapping "CG" sites in the sequence
-    for match in re.finditer("CG", seq):
-        L = len(read_tag_data["fi"])
-        cg_pos = match.start()
-        win_start = cg_pos - flank_size
-        win_end = cg_pos + 2 + flank_size
-        rev_win_start = L - win_end
-        rev_win_end = L - win_start
-
-        # Check for out-of-bounds windows early
-        if not all([win_start >= 0, win_end <= L, rev_win_end >= 0, rev_win_start <= L]):
-            continue
-
-        context_seq = seq[win_start:win_end]
-        if singletons and context_seq.count("CG") != 1:
-            continue
-        
-        context_qual = qual_values[win_start:win_end]
-
-        # --- Slicing Logic ---
-        site_data_to_append = {}
-        for tag, values in read_tag_data.items():
-            if values is None:
-                site_data_to_append[tag] = None
-                continue
-            if tag in per_base_tags:
-                site_data_to_append[tag] = values[rev_win_start:rev_win_end] if tag in {"ri", "rp"} else values[win_start:win_end]
-            else:
-                site_data_to_append[tag] = values
-
-        # --- Length Check ---
-        context_lengths = {len(v) for k, v in site_data_to_append.items() if k in per_base_tags and v is not None}
-        context_lengths.add(len(context_seq))
-        context_lengths.add(len(context_qual))
-        if len(context_lengths) > 1 or (context not in context_lengths and len(context_lengths) > 0):
-            continue
-
-        # --- Yield a valid window ---
-        # This dictionary represents one row in the final DataFrame
-        yield {
-            "read_name": processed_read["name"],
-            "cg_pos": cg_pos,
-            "seq": context_seq,
-            "qual": context_qual,
-            **site_data_to_append,
-        }
-        # final_window = {
-        #     "read_name": processed_read["name"],
-        #     "cg_pos": cg_pos,
-        #     "seq": context_seq,
-        #     "qual": context_qual,
-        # }
-        # final_window.update(site_data_to_append)
-        # yield final_window
-
 def bam_to_df(bam_path: str, n_reads: int, context: int, singletons: bool, optional_tags: list):
     PER_BASE_TAGS = {"fi", "ri", "fp", "rp", "sm", "sx"}
     required_tags = REQUIRED_TAGS
     optional_tags_set = set(optional_tags)
     all_tags = required_tags.union(optional_tags_set)
-    print(all_tags)
 
-    # Initialize the final data accumulator
-    all_windows = []
+    final_cols = ["read_name", "cg_pos", "seq", "qual"] + list(all_tags)
+    col_data = {key: [] for key in final_cols}
     
-    counters = {
-        "reads_processed": 0,
-        "reads_skipped": 0,
-        "cpg_windows_found": 0
-    }
+    counters = { "reads_processed": 0, "reads_skipped": 0, "cpg_windows_found": 0 }
+    flank_size = (context - 2) // 2
 
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         for i, read in enumerate(bam):
             if i >= n_reads and n_reads != 0:
                 break
             
-            # --- 1. Process the Read ---
             processed_read = _process_read(read, all_tags, required_tags)
             
             if processed_read is None:
                 counters["reads_skipped"] += 1
                 continue
             
-            # --- 2. Extract CpG Windows from the processed read ---
-            for window_data in _extract_cpg_windows(processed_read, context, singletons, PER_BASE_TAGS):
-                all_windows.append(window_data)
-                counters["cpg_windows_found"] += 1
+            seq = processed_read["seq"]
+            qual_values = processed_read["qual"]
+            read_tag_data = processed_read["tag_data"]
 
+            for match in re.finditer("CG", seq):
+                L = len(read_tag_data["fi"])
+                cg_pos = match.start()
+                win_start = cg_pos - flank_size
+                win_end = cg_pos + 2 + flank_size
+                rev_win_start = L - win_end
+                rev_win_end = L - win_start
+
+                if not all([win_start >= 0, win_end <= L, rev_win_end >= 0, rev_win_start <= L]):
+                    continue
+
+                context_seq = seq[win_start:win_end]
+                if singletons and context_seq.count("CG") != 1:
+                    continue
+                
+                # Check that all sliced data will have the correct context length
+                if len(context_seq) != context:
+                    continue
+
+                # --- Append data directly to the column lists ---
+                col_data["read_name"].append(processed_read["name"])
+                col_data["cg_pos"].append(cg_pos)
+                col_data["seq"].append(context_seq)
+                col_data["qual"].append(qual_values[win_start:win_end])
+
+                for tag, values in read_tag_data.items():
+                    if values is None:
+                        # This should only happen for optional tags not present
+                        col_data[tag].append(None) 
+                        continue
+                    
+                    if tag in PER_BASE_TAGS:
+                        sliced_values = values[rev_win_start:rev_win_end] if tag in {"ri", "rp"} else values[win_start:win_end]
+                        col_data[tag].append(sliced_values)
+                    else: # Non-per-base tags like 'np'
+                        col_data[tag].append(values)
+
+                counters["cpg_windows_found"] += 1
             counters["reads_processed"] += 1
 
     print("--- Debugging Counters ---")
@@ -184,14 +152,12 @@ def bam_to_df(bam_path: str, n_reads: int, context: int, singletons: bool, optio
         print(f"{key:<25}: {value}")
     print("--------------------------")
 
-    if not all_windows:
+    if counters["cpg_windows_found"] == 0:
         print("Warning: No valid CpG windows were found. Returning an empty DataFrame.")
         return pl.DataFrame()
     
-    first_window_cols = all_windows[0].keys()
-    schema = {col: DTYPE_MAP[col] for col in first_window_cols if col in DTYPE_MAP}
-    print(all_windows[0])
-    df = pl.from_dicts(all_windows, schema=schema)
+    final_schema = {k: v for k, v in DTYPE_MAP.items() if k in col_data and col_data[k]}
+    df = pl.DataFrame(col_data, schema=final_schema)
     return df
 
 

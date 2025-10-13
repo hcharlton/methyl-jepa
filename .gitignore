@@ -3,6 +3,7 @@ work/
 .nextflow/
 tutorials/
 .ipynb_checkpoints/
+__pycache__/
 
 .nextflow.log.*
 *.DS_Store
@@ -21,4 +22,6 @@ tutorials/
 *.log
 *.sam
 *.svg
+*.pyc
+*.cpython
 profile_output*
