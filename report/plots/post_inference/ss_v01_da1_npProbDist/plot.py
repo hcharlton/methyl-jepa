@@ -19,7 +19,7 @@ join_q = (
     .with_columns((pl.col('read_name') + pl.col('pos').cast(pl.String)).alias('id'))
     .join(how='inner', other=da1_source_q, on='id')
     .select(['read_name','prob','np'])
-    .filter(pl.col('np')>20)
+    .filter(pl.col('np')>30)
     .head(1_000_000)
 )
 
