@@ -120,7 +120,7 @@ def create_ssl_dataset(bam_path, output_path, n_reads, context, optional_tags):
 
     tags_str = ' '.join(optional_tags)
 
-    options = {'cores': 32, 'memory': '512gb', 'walltime': '03:00:00'}
+    options = {'cores': 8, 'memory': '256gb', 'walltime': '02:00:00'}
     spec = f"""
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate methyl-jepa
