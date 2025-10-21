@@ -33,7 +33,9 @@ CONFIG = {
     'posneg_optional_tags': ['np', 'sm', 'sx'],
     # testset_inference_dataset_target
     'testset_inference_ds_path': 'data/01_processed/inference_sets/testset_inference_dataset.parquet',
-
+    # --- SSL DATA ---
+    # da1
+    'da1_ssl_ds_path': "data/01_processed/ssl_sets/da1.parquet",
     # --- Model & Training ---
     'output_artifact_path': 'models/v_1_model_artifact.pt',
     'output_artifact_path_cpu': 'models/v1_model_artifact_cpu.pt',
@@ -112,6 +114,25 @@ def create_testset_inference_dataset(pos_ds, neg_ds, test_ds, out_ds):
     """
     return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
+def create_ssl_dataset(bam_path, output_path, n_reads, context, optional_tags):
+    inputs = {'in_file': bam_path}
+    outputs = {'out_file': output_path}
+
+    tags_str = ' '.join(optional_tags)
+
+    options = {'cores': 32, 'memory': '512gb', 'walltime': '03:00:00'}
+    spec = f"""
+    source $(conda info --base)/etc/profile.d/conda.sh
+    conda activate methyl-jepa
+    cd {p('')}
+    python -m scripts.make_ssl_dataset \\
+        -i {bam_path} \\
+        -n {n_reads} \\
+        -c {context} \\
+        -o {output_path} \\
+        -t {tags_str}
+    """
+    return AnonymousTarget(inputs=inputs, outputs=outputs, options=options, spec=spec)
 
 def compute_norm_stats(train_parquet_path, output_json_path):
     """Calculates mean/std from the training data."""
@@ -287,6 +308,16 @@ da1_data_target = gwf.target_from_template(
         out_file=CONFIG['da1_ds_path'],
         n_reads=1_000_000,
         context=CONFIG['context'],
+        optional_tags=CONFIG['da1_optional_tags']
+    )
+)
+da1_ssl_data_target = gwf.target_from_template(
+    name="create_da1_ssl_dataset",
+    template=create_ssl_dataset(
+        bam_path=CONFIG['da1_bam_path'],
+        output_path=CONFIG['da1_ssl_ds_path'],
+        n_reads=100,
+        context=2048,
         optional_tags=CONFIG['da1_optional_tags']
     )
 )
