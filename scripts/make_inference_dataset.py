@@ -82,6 +82,7 @@ def _process_read(read, all_tags, required_tags):
 
 def bam_to_df(bam_path: str, n_reads: int, context: int, singletons: bool, optional_tags: list):
     PER_BASE_TAGS = {"fi", "ri", "fp", "rp", "sm", "sx"}
+    vocab = {'N': 1, 'A':2, 'T':3, 'C':4, 'G':5}
     required_tags = REQUIRED_TAGS
     optional_tags_set = set(optional_tags)
     all_tags = required_tags.union(optional_tags_set)
