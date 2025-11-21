@@ -4,6 +4,9 @@ work/
 tutorials/
 .ipynb_checkpoints/
 __pycache__/
+./__pycache__
+__pycache__
+*.pyc
 
 .nextflow.log.*
 *.DS_Store
